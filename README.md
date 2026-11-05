@@ -124,6 +124,8 @@ The 22 columns of `wbs.csv` (English headers; Korean headers in brackets):
 | **Personal data** | Read through your connectors to find your work, not stored. Rows describe the work and name organisations and roles, never other people's names, e-mail addresses or phone numbers (`validate.py` warns if one slips in). |
 | **Retention** | Nothing is kept outside your own files. |
 
+The full policy is in [PRIVACY.md](PRIVACY.md).
+
 
 - **Your data stays where you put it**: a local folder, a private repository or a private artifact. There is no server; the dashboard computes in your browser.
 - **Sources are read-only.** The skills never send, edit, share or delete anything in a connected app.
