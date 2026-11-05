@@ -18,6 +18,8 @@ _Screenshot placeholder: dashboard board view (docs/screenshot.png)_
   - Ledger and coverage views to read the raw rows and see how completely each source has been swept.
 - **Agent files.** `summary.json` and `llms.txt` let any agent answer "what is blocked?", "what did I finish this week?" or "how am I doing?" without parsing the CSV.
 
+- **Why it works**: the research behind each design choice, with verified references: [docs/research.md](docs/research.md).
+
 ## Why: raw data first
 
 Planning tools ask you to describe work before you do it, then drift away from reality. This package records what actually happened, with exact dates and evidence, from the places your work already leaves traces: chats, commits, documents, mail, calendars.
