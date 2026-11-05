@@ -1,0 +1,7 @@
+# skill zips built by scripts/package_skills.py
+dist/
+__pycache__/
+*.pyc
+# your own ledger, if you keep it inside a clone of this repository
+my-ledger/
+sweep_state.json

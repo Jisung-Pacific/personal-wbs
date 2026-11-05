@@ -1,0 +1,16 @@
+{
+  "name": "personal-wbs",
+  "description": "A personal work-breakdown ledger of everything you do, kept by Claude agents, with a self-contained HTML dashboard.",
+  "owner": {
+    "name": "Jisung Park"
+  },
+  "plugins": [
+    {
+      "name": "personal-wbs",
+      "source": "./",
+      "description": "Skills to bootstrap, maintain and sweep a personal WBS ledger (wbs.csv) across years, with agent files and a weekly health check.",
+      "category": "productivity",
+      "tags": ["wbs", "work-log", "project-management", "dashboard", "agent-skills"]
+    }
+  ]
+}

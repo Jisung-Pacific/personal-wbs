@@ -1,0 +1,139 @@
+﻿year,month,source,state,passes,new_last_pass,last_checked,memo
+2026,01,Claude chats,complete,2,0,2026-10-15,"54 chats listed by ID and judged, 0 new"
+2026,01,ChatGPT export,complete,2,0,2026-09-23,"export of 2026-09-10: 26 conversations, 0 new"
+2026,01,GitHub,complete,3,0,2026-10-16,"60 commits on all branches, 0 new"
+2026,01,Google Drive,complete,2,0,2026-10-16,"35 files by created and modified time, 0 new"
+2026,01,Google Calendar,complete,3,0,2026-10-16,"41 events, 0 new"
+2026,01,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2026,02,Claude chats,complete,2,0,2026-09-28,"45 chats listed by ID and judged, 0 new"
+2026,02,ChatGPT export,complete,2,0,2026-09-16,"export of 2026-09-10: 9 conversations, 0 new"
+2026,02,GitHub,complete,2,0,2026-10-07,"48 commits on all branches, 0 new"
+2026,02,Google Drive,complete,3,0,2026-10-12,"32 files by created and modified time, 0 new"
+2026,02,Google Calendar,complete,3,0,2026-09-15,"11 events, 0 new"
+2026,02,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2026,03,Claude chats,complete,2,0,2026-09-14,"24 chats listed by ID and judged, 0 new"
+2026,03,ChatGPT export,complete,3,0,2026-09-18,"export of 2026-09-10: 59 conversations, 0 new"
+2026,03,GitHub,complete,2,0,2026-10-18,"40 commits on all branches, 0 new"
+2026,03,Google Drive,complete,2,0,2026-10-17,"50 files by created and modified time, 0 new"
+2026,03,Google Calendar,complete,2,0,2026-10-14,"55 events, 0 new"
+2026,03,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2026,04,Claude chats,complete,2,0,2026-09-27,"23 chats listed by ID and judged, 0 new"
+2026,04,ChatGPT export,complete,2,0,2026-10-13,"export of 2026-09-10: 55 conversations, 0 new"
+2026,04,GitHub,complete,2,0,2026-09-18,"32 commits on all branches, 0 new"
+2026,04,Google Drive,complete,2,0,2026-10-02,"51 files by created and modified time, 0 new"
+2026,04,Google Calendar,complete,2,0,2026-09-26,"47 events, 0 new"
+2026,04,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2026,05,Claude chats,complete,3,0,2026-10-03,"24 chats listed by ID and judged, 0 new"
+2026,05,ChatGPT export,complete,2,0,2026-09-22,"export of 2026-09-10: 44 conversations, 0 new"
+2026,05,GitHub,complete,2,0,2026-09-17,"38 commits on all branches, 0 new"
+2026,05,Google Drive,complete,3,0,2026-09-20,"25 files by created and modified time, 0 new"
+2026,05,Google Calendar,complete,2,0,2026-10-15,"21 events, 0 new"
+2026,05,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2026,06,Claude chats,complete,2,0,2026-10-13,"37 chats listed by ID and judged, 0 new"
+2026,06,ChatGPT export,complete,3,0,2026-09-21,"export of 2026-09-10: 57 conversations, 0 new"
+2026,06,GitHub,complete,2,0,2026-10-03,"20 commits on all branches, 0 new"
+2026,06,Google Drive,complete,2,0,2026-09-15,"38 files by created and modified time, 0 new"
+2026,06,Google Calendar,complete,3,0,2026-09-18,"37 events, 0 new"
+2026,06,Slack,partial,1,0,2026-09-14,tool limit: visible from 06-16 only
+2026,07,Claude chats,complete,2,0,2026-09-27,"21 chats listed by ID and judged, 0 new"
+2026,07,ChatGPT export,complete,2,0,2026-09-19,"export of 2026-09-10: 45 conversations, 0 new"
+2026,07,GitHub,complete,2,0,2026-10-17,"55 commits on all branches, 0 new"
+2026,07,Google Drive,complete,3,0,2026-09-22,"31 files by created and modified time, 0 new"
+2026,07,Google Calendar,complete,2,0,2026-10-16,"60 events, 0 new"
+2026,07,Slack,complete,2,0,2026-10-07,"15 own messages, 0 new"
+2026,08,Claude chats,complete,2,0,2026-10-15,"39 chats listed by ID and judged, 0 new"
+2026,08,ChatGPT export,complete,2,0,2026-09-24,"export of 2026-09-10: 9 conversations, 0 new"
+2026,08,GitHub,complete,2,0,2026-10-12,"39 commits on all branches, 0 new"
+2026,08,Google Drive,complete,2,0,2026-09-23,"27 files by created and modified time, 0 new"
+2026,08,Google Calendar,complete,2,0,2026-10-08,"30 events, 0 new"
+2026,08,Slack,complete,2,0,2026-10-05,"15 own messages, 0 new"
+2026,09,Claude chats,complete,2,0,2026-10-05,"28 chats listed by ID and judged, 0 new"
+2026,09,ChatGPT export,partial,1,0,2026-09-14,tool limit: the export ends on 2026-09-10
+2026,09,GitHub,complete,2,0,2026-10-02,"8 commits on all branches, 0 new"
+2026,09,Google Drive,partial,1,1,2026-10-20,31 files by modified time only
+2026,09,Google Calendar,complete,2,0,2026-09-18,"32 events, 0 new"
+2026,09,Slack,complete,2,0,2026-10-01,"35 own messages, 0 new"
+2026,10,Claude chats,partial,2,1,2026-11-05,"25 chats listed by ID, 1 new"
+2026,10,ChatGPT export,not_started,0,,,needs a new export from the user
+2026,10,GitHub,partial,1,1,2026-11-05,17 commits on all branches
+2026,10,Google Drive,partial,1,1,2026-10-20,40 files by modified time only
+2026,10,Google Calendar,complete,2,0,2026-10-07,"57 events, 0 new"
+2026,10,Slack,partial,1,0,2026-11-05,9 own messages
+2026,11,Claude chats,partial,1,0,2026-11-05,month still running
+2026,11,ChatGPT export,not_started,0,,,needs a new export from the user
+2026,11,GitHub,partial,1,0,2026-11-05,34 commits on all branches
+2026,11,Google Drive,not_started,0,,,
+2026,11,Google Calendar,partial,1,0,2026-11-05,month still running
+2026,11,Slack,not_started,0,,,
+2025,01,Claude chats,complete,2,0,2026-09-29,"12 chats listed by ID and judged, 0 new"
+2025,01,ChatGPT export,complete,3,0,2026-09-27,"export of 2026-09-10: 12 conversations, 0 new"
+2025,01,GitHub,complete,2,0,2026-09-21,"27 commits on all branches, 0 new"
+2025,01,Google Drive,complete,2,0,2026-10-07,"53 files by created and modified time, 0 new"
+2025,01,Google Calendar,complete,2,0,2026-09-22,"24 events, 0 new"
+2025,01,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,02,Claude chats,complete,3,0,2026-09-24,"39 chats listed by ID and judged, 0 new"
+2025,02,ChatGPT export,complete,3,0,2026-09-24,"export of 2026-09-10: 22 conversations, 0 new"
+2025,02,GitHub,complete,2,0,2026-10-16,"35 commits on all branches, 0 new"
+2025,02,Google Drive,complete,2,0,2026-10-10,"29 files by created and modified time, 0 new"
+2025,02,Google Calendar,complete,2,0,2026-10-04,"30 events, 0 new"
+2025,02,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,03,Claude chats,complete,2,0,2026-10-19,"29 chats listed by ID and judged, 0 new"
+2025,03,ChatGPT export,complete,2,0,2026-09-15,"export of 2026-09-10: 36 conversations, 0 new"
+2025,03,GitHub,complete,3,0,2026-10-17,"29 commits on all branches, 0 new"
+2025,03,Google Drive,complete,2,0,2026-10-16,"26 files by created and modified time, 0 new"
+2025,03,Google Calendar,complete,2,0,2026-09-28,"15 events, 0 new"
+2025,03,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,04,Claude chats,complete,2,0,2026-09-25,"10 chats listed by ID and judged, 0 new"
+2025,04,ChatGPT export,complete,2,0,2026-09-22,"export of 2026-09-10: 56 conversations, 0 new"
+2025,04,GitHub,complete,2,0,2026-09-30,"51 commits on all branches, 0 new"
+2025,04,Google Drive,complete,3,0,2026-10-18,"17 files by created and modified time, 0 new"
+2025,04,Google Calendar,complete,3,0,2026-10-15,"44 events, 0 new"
+2025,04,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,05,Claude chats,complete,2,0,2026-09-25,"11 chats listed by ID and judged, 0 new"
+2025,05,ChatGPT export,complete,2,0,2026-10-01,"export of 2026-09-10: 12 conversations, 0 new"
+2025,05,GitHub,complete,2,0,2026-09-19,"48 commits on all branches, 0 new"
+2025,05,Google Drive,complete,2,0,2026-09-28,"13 files by created and modified time, 0 new"
+2025,05,Google Calendar,complete,2,0,2026-09-21,"24 events, 0 new"
+2025,05,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,06,Claude chats,complete,3,0,2026-10-01,"34 chats listed by ID and judged, 0 new"
+2025,06,ChatGPT export,complete,3,0,2026-09-16,"export of 2026-09-10: 16 conversations, 0 new"
+2025,06,GitHub,complete,2,0,2026-09-29,"53 commits on all branches, 0 new"
+2025,06,Google Drive,complete,2,0,2026-09-30,"18 files by created and modified time, 0 new"
+2025,06,Google Calendar,complete,2,0,2026-09-26,"19 events, 0 new"
+2025,06,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,07,Claude chats,complete,2,0,2026-09-27,"56 chats listed by ID and judged, 0 new"
+2025,07,ChatGPT export,complete,3,0,2026-10-16,"export of 2026-09-10: 36 conversations, 0 new"
+2025,07,GitHub,complete,2,0,2026-10-01,"19 commits on all branches, 0 new"
+2025,07,Google Drive,complete,2,0,2026-09-15,"59 files by created and modified time, 0 new"
+2025,07,Google Calendar,complete,2,0,2026-09-14,"10 events, 0 new"
+2025,07,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,08,Claude chats,complete,2,0,2026-10-16,"20 chats listed by ID and judged, 0 new"
+2025,08,ChatGPT export,complete,2,0,2026-10-12,"export of 2026-09-10: 23 conversations, 0 new"
+2025,08,GitHub,complete,3,0,2026-10-11,"50 commits on all branches, 0 new"
+2025,08,Google Drive,complete,2,0,2026-10-18,"39 files by created and modified time, 0 new"
+2025,08,Google Calendar,complete,3,0,2026-10-03,"40 events, 0 new"
+2025,08,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,09,Claude chats,complete,2,0,2026-09-22,"20 chats listed by ID and judged, 0 new"
+2025,09,ChatGPT export,complete,2,0,2026-09-17,"export of 2026-09-10: 30 conversations, 0 new"
+2025,09,GitHub,complete,3,0,2026-09-18,"8 commits on all branches, 0 new"
+2025,09,Google Drive,complete,2,0,2026-09-30,"55 files by created and modified time, 0 new"
+2025,09,Google Calendar,complete,2,0,2026-09-17,"18 events, 0 new"
+2025,09,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,10,Claude chats,complete,3,0,2026-10-02,"50 chats listed by ID and judged, 0 new"
+2025,10,ChatGPT export,complete,2,0,2026-10-02,"export of 2026-09-10: 23 conversations, 0 new"
+2025,10,GitHub,complete,2,0,2026-09-25,"37 commits on all branches, 0 new"
+2025,10,Google Drive,complete,2,0,2026-10-12,"25 files by created and modified time, 0 new"
+2025,10,Google Calendar,complete,2,0,2026-10-07,"24 events, 0 new"
+2025,10,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,11,Claude chats,complete,2,0,2026-10-03,"10 chats listed by ID and judged, 0 new"
+2025,11,ChatGPT export,complete,2,0,2026-09-25,"export of 2026-09-10: 30 conversations, 0 new"
+2025,11,GitHub,complete,2,0,2026-10-08,"29 commits on all branches, 0 new"
+2025,11,Google Drive,complete,3,0,2026-10-01,"38 files by created and modified time, 0 new"
+2025,11,Google Calendar,complete,2,0,2026-09-26,"49 events, 0 new"
+2025,11,Slack,unavailable,0,,,older than the ~90 days kept on the free plan
+2025,12,Claude chats,complete,2,0,2026-09-19,"24 chats listed by ID and judged, 0 new"
+2025,12,ChatGPT export,complete,2,0,2026-09-16,"export of 2026-09-10: 33 conversations, 0 new"
+2025,12,GitHub,complete,2,0,2026-10-03,"9 commits on all branches, 0 new"
+2025,12,Google Drive,complete,2,0,2026-09-28,"48 files by created and modified time, 0 new"
+2025,12,Google Calendar,complete,2,0,2026-10-17,"45 events, 0 new"
+2025,12,Slack,unavailable,0,,,older than the ~90 days kept on the free plan

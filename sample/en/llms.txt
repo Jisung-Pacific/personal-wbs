@@ -1,0 +1,57 @@
+# Personal WBS ledger
+
+> One ledger of all work across years, kept by AI agents. As of 2026-11-06: 217 leaf tasks over 2025–2026; open now 11 in progress, 6 waiting, 5 in backlog; health check 38/100 (risk), next check 2026-11-09.
+
+This folder holds the raw ledger and two files written for agents. Read `summary.json` first; open `wbs.csv` for detail or history. The ledger is raw data: one row per concrete deliverable, decision or event, dated from its source and pointing to its evidence. Summaries, rollups and the health check are computed views, never rows. Files are UTF-8 CSV (with BOM) or JSON; this ledger is kept in English.
+
+## Files
+
+- [summary.json](summary.json): precomputed state: counts by status, open tasks with every field and days since last progress, packages, recent completions (7 and 30 days), plan (goals, focus, next check-up), sweep coverage and the health check
+- [wbs.csv](wbs.csv): the ledger and source of truth: one row per task or dated step, all years in one file
+- [plan.csv](plan.csv): goals, focus packages, health-check dates and settings (`kind,year,target,note,decided,recheck`)
+- [events.csv](events.csv): append-only log of creations, status changes, corrections and moves
+- [coverage.csv](coverage.csv): how completely each year × month × source window has been swept
+
+## Schema of wbs.csv
+
+| column | meaning |
+|---|---|
+| year | the year tree the row belongs to (= year of `start`); key = (year, code) |
+| code | WBS code `area.package.task` or `area.package.task.step`; permanent, gaps are retired codes |
+| level | 3 = task, 4 = dated step under a level-3 parent |
+| area / package | `<n> <name>` and `<n.m> <name>` |
+| parent | level-4 rows only: `<parent code> <parent title>` |
+| task | what was produced, decided or happened, with numbers; unverified outcomes say so |
+| start / end | `YYYY-MM-DD` from the source timestamp; `end` blank while open; blank = unknown (never guessed) |
+| date_text | the human form, e.g. `2026-06-22 ~ 07-12`, `planned`, `not recorded` |
+| start_month | first 7 characters of `start` |
+| status | `done`, `in_progress`, `waiting` (on someone else), `backlog` (parked on purpose) |
+| key_result | `Y` for headline results only |
+| source | who wrote the row (e.g. Claude, GPT, Claude·GPT) |
+| due | real deadline or committed date |
+| importance | `high`, `medium`, `low`; blank = medium |
+| size | estimate when created: S ≤ 1 day, M ≤ 1 week, L ≤ 1 month, XL > 1 month |
+| depends_on | prerequisite codes separated by `;` (`2025:1.2.3` for another year) |
+| blocker | `<category>: <what or who>`; categories: external review, external reply, external dependency, prerequisite, scheduled later, on hold, result unconfirmed |
+| last_progress | last day anything happened on the row |
+| goal | one goal from the goal list in plan.csv |
+| evidence | `;`-separated pointers such as `claude:<chat id8>`, `gpt:<conversation id>`, `gh:<owner/repo>#<PR>`, `drive:<file title>`, `cal:<date>` |
+
+## How to answer common questions
+
+- **What is blocked?** `summary.json` → `open_tasks` with `status` = `waiting` or a non-empty `blocker`. Quote the blocker; `blocker_category` is normalized.
+- **What is overdue or due soon?** `open_tasks` with `overdue` = true; due within a week: `0 ≤ days_to_due ≤ 7`.
+- **What did I finish this week (this month)?** `recent_completions["7d"]` (`["30d"]`). Rows with month-only end dates are not in these lists.
+- **What should I work on next?** `open_tasks` are sorted by urgency (overdue, nearest due date, importance, idle days). Prefer `focus` packages, skip `backlog`, and check `depends_on`.
+- **How am I doing?** `health`: index 0–100 and its value 4 weeks ago, level, patterns, each indicator with its value, reference range, level and prescription, and the next check-up date.
+- **What happened to X?** Search `task` in `wbs.csv`; its history is in `events.csv` (rows with `estimated` = Y were reconstructed later). Follow `evidence` to re-verify.
+- **How complete is the ledger?** `coverage.by_year[year].percent_complete` = complete windows ÷ windows that are not unavailable.
+
+## Conventions
+
+- Counts, completion rates and the health check use leaf rows (rows without steps).
+- Each year has its own tree; a task that continues into a new year gets a new row there marked "(continued)".
+- One row per deliverable, decision or event. Never merge several outcomes into a range row; separately dated steps are level-4 rows.
+- Answer in the user's language; when writing rows, keep the ledger's language (English here).
+- In `summary.json`, keys and enumerated values (status, importance, blocker category, level) are English codes; `labels` gives their display labels.
+- `summary.json` is generated: never edit it by hand. Regenerate it with `make_agent_files.py` after changing the CSV files.

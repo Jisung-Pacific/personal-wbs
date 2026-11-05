@@ -1,0 +1,10 @@
+﻿kind,year,target,note,decided,recheck
+goal,,Finish the MSc,Thesis defended and submitted by the end of 2026,2026-09-14,
+goal,,PhD admission for 2027,An offer from at least one target program,2026-09-14,
+goal,,Publish the research,"One workshop paper, one main-track paper, a journal extension submitted",2026-09-14,
+goal,,Grow Sproutlog,"1,000 weekly active users with a sustainable routine",2026-09-14,
+goal,,Admin on time,"No missed enrollment, tax or paperwork deadlines",2026-09-14,
+focus,2026,1.1,Final thesis and repository submission by the end of November,2026-11-02,2026-11-30
+focus,2026,2.1,"PhD applications: University B by Dec 1, University C by Dec 15",2026-11-02,2026-11-30
+checkup,2026,,"Weekly health check, first one after the bootstrap",2026-11-02,2026-11-09
+config,,publish,folder:.,2026-09-14,
