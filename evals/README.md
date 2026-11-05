@@ -21,4 +21,21 @@ claude plugin eval . --scaffold --trust-plugin --allow-tools Write Edit "Bash(py
 claude plugin eval . --scaffold --trust-plugin --allow-tools Write Edit "Bash(python3 *)" --runs 1 --ablation none
 ```
 
+Use `--judge-model sonnet` for the `llm` graders: with the default small judge, a correct sweep plan was once marked FAIL, and the same case passed with Sonnet as the judge.
+
+## Last results
+
+2026-11-06, Claude Code 2.1.318, two runs per arm, `Write` and `Edit` granted (no sandbox for `Bash` on that machine), default judge:
+
+| Case | With | Without | Δ |
+|---|---|---|---|
+| `schedule-gives-prompts` | 1.00 | 0.00 | +1.00 |
+| `today-one-minute-view` | 1.00 | 0.67 | +0.33 |
+| `tracker-logs-atomic-rows` | 1.00 | 1.00 | 0.00 |
+| `bootstrap-starts-guided-setup` | 1.00 | 1.00 | 0.00 |
+| `sweep-enumerates-windows` | 0.50 (1.00 with a Sonnet judge) | 1.00 | −0.50 |
+| `ignores-unrelated-writing`, `ignores-generic-project-plan` | 1.00 | 1.00 | 0.00 |
+
+A Δ of 0 means the base model already does that part well on such a short case; the cases still guard against regressions.
+
 `--scaffold` runs the cases' `scaffold.sh` (it only writes `ledger/wbs.csv` and `ledger/plan.csv` into the empty workspace). Granting `Bash` runs commands in Claude Code's sandbox; on Linux install `bubblewrap` and `socat` first. Results go to `evals/results/`, which is ignored by Git.
