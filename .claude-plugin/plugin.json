@@ -1,10 +1,20 @@
 {
   "name": "personal-wbs",
+  "displayName": "Personal WBS",
   "description": "Keep one ledger of all your work across years: bootstrap it from your sources, log new work silently, sweep for anything missed, and check your work health every week.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "Jisung Park"
   },
   "license": "MIT",
-  "keywords": ["wbs", "work-log", "ledger", "project-management", "dashboard", "health-check"]
+  "icon": ".claude-plugin/icon.png",
+  "homepage": "https://github.com/Jisung-Pacific/personal-wbs",
+  "keywords": [
+    "wbs",
+    "work-log",
+    "ledger",
+    "project-management",
+    "dashboard",
+    "health-check"
+  ]
 }
