@@ -114,6 +114,17 @@ The 22 columns of `wbs.csv` (English headers; Korean headers in brackets):
 
 ## Privacy model
 
+### What the plugin reads, writes and sends
+
+| | |
+|---|---|
+| **Reads** | Your past Claude chats (chat search), Claude Code session transcripts on your machine, exports you upload (ChatGPT, Claude), and the apps you have connected: Google Drive, Gmail, Google Calendar, Slack, Notion, GitHub. Read-only. |
+| **Writes** | The ledger files (`wbs.csv` and its companions) to the place you choose: a claude.ai artifact, a local folder, or your own private Git repository. |
+| **Sends** | Nothing to the author or to any other service: no server, no telemetry, no analytics. The one write that leaves Claude is the commit to your own Git repository, made only if you chose that location and asked for it. |
+| **Personal data** | Read through your connectors to find your work, not stored. Rows describe the work and name organisations and roles, never other people's names, e-mail addresses or phone numbers (`validate.py` warns if one slips in). |
+| **Retention** | Nothing is kept outside your own files. |
+
+
 - **Your data stays where you put it**: a local folder, a private repository or a private artifact. There is no server; the dashboard computes in your browser.
 - **Sources are read-only.** The skills never send, edit, share or delete anything in a connected app.
 - **Pointers, not copies.** Rows hold short descriptions and evidence IDs, not message contents.
