@@ -1,0 +1,21 @@
+{
+  "name": "personal-wbs-autolog",
+  "displayName": "Personal WBS Autolog",
+  "version": "0.2.0",
+  "description": "Optional companion to personal-wbs for Claude Code: notes each finished session so its work can be logged to your ledger later, and adds a read-only collector agent.",
+  "author": {
+    "name": "Jisung Park"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Jisung-Pacific/personal-wbs",
+  "repository": "https://github.com/Jisung-Pacific/personal-wbs",
+  "keywords": [
+    "wbs",
+    "work-log",
+    "hooks",
+    "claude-code"
+  ],
+  "dependencies": [
+    "personal-wbs"
+  ]
+}

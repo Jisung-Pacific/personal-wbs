@@ -9,7 +9,7 @@ _스크린샷 자리: 대시보드 보드 화면 (docs/screenshot.png)_
 ## 무엇인가
 
 - **개인 작업 분해 구조(WBS) 원장.** `wbs.csv`에 업무와 생활 행정의 모든 산출물·결정·사건을 모든 연도에 걸쳐 한 파일로 담고, 대분류 → 중분류 → 작업 → 단계(`1.2.3.4`)의 코드 트리로 정리합니다.
-- **에이전트가 관리합니다.** Agent Skills 세 개로 Claude(Claude Code, claude.ai)나 `SKILL.md`를 읽는 어떤 에이전트든 출처에서 원장을 만들고, 작업이 끝날 때마다 조용히 기록하고, 빠진 일을 찾아냅니다.
+- **에이전트가 관리합니다.** Agent Skills 다섯 개로 Claude(Claude Code, Cowork, claude.ai)나 `SKILL.md`를 읽는 어떤 에이전트든 출처에서 원장을 만들고, 작업이 끝날 때마다 조용히 기록하고, 빠진 일을 찾아내고, 오늘 할 일을 1분 안에 보여 주고, 매일·매주 자동 실행을 설정합니다.
 - **HTML 파일 하나인 대시보드.** 서버도 계정도 필요 없습니다. 옆에 있는 CSV 파일을 읽어 모든 계산을 브라우저에서 합니다.
   - **보드**: 오늘 열린 작업, 막힌 일, 마감이 지났거나 다가오는 일, 집중 패키지.
   - **검진**: 지표 10개를 혈액검사처럼 기준 범위(일부는 지난 1년의 내 기록)와 비교해 판정, 처방, 재검일을 보여 줍니다.
@@ -52,7 +52,7 @@ _스크린샷 자리: 대시보드 보드 화면 (docs/screenshot.png)_
 
 ### claude.ai
 
-1. 스킬 압축 파일을 만듭니다: `python3 scripts/package_skills.py`가 `dist/wbs-bootstrap.zip`, `dist/wbs-tracker.zip`, `dist/wbs-sweep.zip`을 씁니다. 업로드한 스킬은 자기 폴더만 볼 수 있으므로, 각 압축 파일에 스킬 폴더와 보조 스크립트를 함께 넣습니다.
+1. 스킬 압축 파일을 만듭니다: `python3 scripts/package_skills.py`가 스킬마다 압축 파일 하나를 `dist/`에 씁니다(`wbs-bootstrap`, `wbs-tracker`, `wbs-sweep`, `wbs-today`, `wbs-schedule`). 업로드한 스킬은 자기 폴더만 볼 수 있으므로, 각 압축 파일에 스킬 폴더와 보조 스크립트를 함께 넣습니다.
 2. **Settings → Capabilities → Skills**(최신 버전에서는 **Customize → Skills**)에서 압축 파일을 하나씩 올리고 켭니다. 코드 실행이 켜져 있어야 합니다.
 3. "내 WBS 원장 만들어 줘"라고 요청합니다.
 
@@ -60,7 +60,15 @@ _스크린샷 자리: 대시보드 보드 화면 (docs/screenshot.png)_
 
 ### Agent Skills를 읽는 다른 에이전트
 
-`skills/*/SKILL.md`를 가리키면 됩니다. 스크립트는 표준 라이브러리만 쓰는 Python 3이고 원장 폴더를 인자로 받습니다.
+`skills/*/SKILL.md`를 가리키면 됩니다. 스크립트는 표준 라이브러리만 쓰는 Python 3이고 원장 폴더를 인자로 받습니다. Gemini CLI, OpenAI Codex, Grok Build 설치 방법은 [docs/ports.md](docs/ports.md)(영어)에 있습니다.
+
+### 선택: 세션 자동 기록(Claude Code)
+
+```
+/plugin install personal-wbs-autolog@personal-wbs
+```
+
+별도 플러그인입니다. Claude Code 세션이 끝나면 훅이 그 세션의 ID, 시각, 폴더, 기록 파일 경로만 내 컴퓨터에 적어 두고, 동의하면 `wbs-autolog-drain` 스킬이 그 세션들의 일을 원장에 기록합니다. [plugins/personal-wbs-autolog](plugins/personal-wbs-autolog/README.md)(영어)를 보세요.
 
 ### 예시 데이터로 해 보기
 
@@ -73,7 +81,7 @@ python3 scripts/make_agent_files.py sample --as-of 2026-11-06 # summary.json, ll
 python3 scripts/reconcile.py list sample/ko --as-of 2026-11-06
 ```
 
-보려면 `templates/dashboard/`의 대시보드 페이지(한국어는 `index.ko.html`)를 `sample/ko`에 복사하고 폴더를 띄웁니다: `python3 -m http.server -d sample/ko`.
+대시보드 페이지는 아직 저장소에 없습니다. 약 0.6 MB로 플러그인 디렉터리의 파일당 256 KiB 기준을 넘어 릴리스 다운로드로 따로 배포합니다([templates/dashboard](templates/dashboard/README.md) 참고). `sample/ko` 같은 폴더의 CSV 파일을 읽습니다.
 
 ## 스킬
 
@@ -82,6 +90,8 @@ python3 scripts/reconcile.py list sample/ko --as-of 2026-11-06
 | `wbs-bootstrap` | 원장을 처음 만들거나 다시 만들 때 | 권한 점검표, 출처 목록, 분류 체계 승인, 전체 과거 수집, 원자화, 이벤트 복원, 사용자와 상태 확인, 대시보드, 매일·매주 예약 실행 |
 | `wbs-tracker` | 결과가 나온 작업을 마칠 때마다, 일에 대해 물을 때 | 결과를 근거와 날짜가 있는 원자 행으로 조용히 기록하고, 열린·막힌·마감 지난·끝낸 일에 답하고, 주간 검진을 실행 |
 | `wbs-sweep` | 매일 수집, 기록 안 된 일 찾기, 한 해 소급 | 출처 × 월 창 단위로 이어서 하는 전수 수집(완전성 상태, 연쇄 탐색), 기간 행 원자화, 날짜 없는 행 재확인 |
+| `wbs-today` | 오늘 할 일을 물을 때, 매일 요약이 실행될 때 | 오늘 할 일 3개, 늦거나 막힌 일, 결정할 것 최대 3개. 답한 결정만 원장에 반영 |
+| `wbs-schedule` | 원장이 알아서 갱신되게 하고 싶을 때 | 매일 수집·주간 검토·매일 요약용 프롬프트와 Cowork·Claude 앱·Claude Code 설정 방법. 요청할 때만 예약을 만듦 |
 
 | 스크립트 | 용도 |
 |---|---|
@@ -90,6 +100,10 @@ python3 scripts/reconcile.py list sample/ko --as-of 2026-11-06
 | `reconcile.py list/apply <폴더>` | 상태 확인: 열린 작업을 묶음으로 보여 주고 답을 원장에 반영 |
 | `sample_data.py` | 가상 예시 데이터 다시 생성 |
 | `package_skills.py` | 업로드용으로 스킬마다 스크립트를 넣어 압축 |
+
+### 테스트
+
+`evals/`에는 `claude plugin eval`용 동작 시험이 있습니다. 스킬이 맞는 요청에 켜지고 상관없는 요청에는 켜지지 않는지, 사흘에 걸친 결과 세 개가 기간 행 하나가 아니라 날짜가 있는 행 세 개로 기록되는지 확인합니다. [evals/README.md](evals/README.md)(영어)를 보세요.
 
 ## 데이터 모델
 
@@ -123,8 +137,9 @@ python3 scripts/reconcile.py list sample/ko --as-of 2026-11-06
 | **보내기** | 만든 사람이나 다른 서비스로는 아무것도 보내지 않습니다. 서버·텔레메트리·분석 도구가 없습니다. Claude 밖으로 나가는 쓰기는 내 Git 저장소에 하는 커밋뿐이고, 그 위치를 고르고 요청했을 때만 합니다. |
 | **개인정보** | 내 일을 찾으려고 연결된 앱에서 읽을 뿐 저장하지 않습니다. 행에는 일과 기관·역할만 적고, 다른 사람의 이름·이메일·전화번호는 적지 않습니다(`validate.py`가 섞여 들어가면 경고). |
 | **보관** | 내 파일 밖에는 아무것도 남지 않습니다. |
+| **선택: 자동 기록** | 별도 플러그인 `personal-wbs-autolog`는 끝난 Claude Code 세션마다 ID, 시각, 폴더, 기록 파일 경로만 내 컴퓨터의 플러그인 데이터 폴더에 적습니다. 대화 기록은 내가 기록을 승인할 때만 읽습니다. |
 
-전체 방침은 [PRIVACY.md](PRIVACY.md)에 있습니다.
+전체 방침은 [PRIVACY.md](PRIVACY.md)에, 데이터 흐름도는 [docs/data-flow.md](docs/data-flow.md)에, 보안 문제 신고 방법은 [SECURITY.md](SECURITY.md)에 있습니다(영어).
 
 
 - **데이터는 사용자가 둔 곳에 머뭅니다**: 로컬 폴더, 비공개 저장소, 비공개 아티팩트. 서버가 없고 대시보드는 브라우저에서 계산합니다.
@@ -139,24 +154,28 @@ python3 scripts/reconcile.py list sample/ko --as-of 2026-11-06
 
 ```
 personal-wbs/
-├── .claude-plugin/          marketplace.json, plugin.json (Claude Code 플러그인 마켓플레이스)
+├── .claude-plugin/          marketplace.json, plugin.json, icon.png (Claude 플러그인 마켓플레이스)
 ├── skills/
 │   ├── wbs-bootstrap/SKILL.md
 │   ├── wbs-tracker/SKILL.md
-│   └── wbs-sweep/SKILL.md
+│   ├── wbs-sweep/SKILL.md
+│   ├── wbs-today/SKILL.md
+│   └── wbs-schedule/SKILL.md
 ├── scripts/                 validate.py, make_agent_files.py, reconcile.py, sample_data.py,
 │                            package_skills.py, wbs_schema.py (Python 3, 표준 라이브러리)
+├── evals/                   claude plugin eval용 동작 시험
+├── plugins/personal-wbs-autolog/   선택 설치 Claude Code 플러그인: 세션 종료 훅, 수집 에이전트, 기록 스킬
 ├── sample/en, sample/ko     가상 예시 원장과 생성된 에이전트용 파일
-├── templates/dashboard/     대시보드 페이지
-├── docs/                    분류 체계 가이드(영어, 한국어, 간체 중국어)
-├── tools/, i18n/            대시보드 언어 빌드(원본 하나, 번역은 i18n/)
-├── README.md, README.ko.md, README.zh-CN.md
+├── templates/dashboard/     대시보드 페이지 안내
+├── docs/                    분류 체계 가이드(영어·한국어·간체 중국어), 근거, 데이터 흐름, 다른 에이전트
+├── gemini-extension.json    Gemini CLI 확장 매니페스트
+├── README.md, README.ko.md, README.zh-CN.md, PRIVACY.md, SECURITY.md
 └── LICENSE
 ```
 
 ## 로드맵
 
-- 대시보드: `index.html`(영어), `index.ko.html`, `index.zh-CN.html`을 원본 하나에서 `tools/build_i18n.py`와 `i18n/*.json`으로 생성합니다. 번역 파일을 더해 화면 언어를 늘립니다.
+- 대시보드: 페이지를 256 KiB보다 작은 파일들로 나눠 플러그인 안에 넣기. 화면 언어(영어·한국어·간체 중국어)는 이미 실행 중에 바꿀 수 있습니다.
 - 원장 헤더 언어 확대(현재 영어와 한국어).
 - 더 많은 출처의 수집 방법(이슈 트래커, 다른 메일·캘린더, 노트 앱).
 - 스크립트 자동 테스트와 CI, 기계가 읽는 스키마 파일.
@@ -174,8 +193,11 @@ personal-wbs/
 python3 scripts/sample_data.py
 python3 scripts/validate.py sample --strict
 python3 scripts/make_agent_files.py sample --as-of 2026-11-06
-claude plugin validate .
+claude plugin validate --strict .
+claude plugin validate --strict plugins/personal-wbs-autolog
 ```
+
+동작 시험은 모델을 호출하므로 사용량에 포함됩니다: `claude plugin eval . --scaffold --allow-tools Write Edit "Bash(python3 *)"`.
 
 ## 라이선스
 

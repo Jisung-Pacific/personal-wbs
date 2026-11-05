@@ -1,6 +1,6 @@
 # Privacy policy: Personal WBS (personal-wbs)
 
-Effective 2026-11-06. This policy covers everything in this repository: the Agent Skills, the scripts and the dashboard.
+Effective 2026-11-06. This policy covers everything in this repository: the Agent Skills, the scripts, the dashboard and the optional autolog plugin.
 
 ## Summary
 
@@ -24,6 +24,10 @@ The ledger files (`wbs.csv` and its companions) go only to the location you choo
 ## What it sends
 
 Nothing is sent to the author or to any other service: there is no server, no telemetry and no analytics. The only write that leaves Claude is a commit to your own Git repository, made only when you chose that location and asked for it. The bundled scripts use the Python standard library only and make no network calls.
+
+## Optional autolog plugin
+
+`personal-wbs-autolog` is a separate plugin in this repository for Claude Code; it is not part of the core plugin and is installed only if you choose it. When a Claude Code session ends, its hook writes four fields (session ID, time, working folder and transcript path) to `queue.jsonl` in the plugin's own data folder on your computer. It never reads the conversation and never uses the network. The transcripts are read later, in a session on the same computer, only when you approve the `wbs-autolog-drain` skill, and only to log your work with the rules below. Uninstalling the plugin deletes its data folder.
 
 ## Personal data
 

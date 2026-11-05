@@ -1,0 +1,30 @@
+{
+  "description": "personal-wbs-autolog: queue a pointer to each finished session, and note once a day at startup when sessions are waiting to be logged.",
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/enqueue_pointer.py"],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/queue_note.py"],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

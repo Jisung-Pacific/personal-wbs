@@ -10,7 +10,25 @@
       "source": "./",
       "description": "Skills to bootstrap, maintain and sweep a personal WBS ledger (wbs.csv) across years, with agent files and a weekly health check.",
       "category": "productivity",
-      "tags": ["wbs", "work-log", "project-management", "dashboard", "agent-skills"]
+      "tags": [
+        "wbs",
+        "work-log",
+        "project-management",
+        "dashboard",
+        "agent-skills"
+      ]
+    },
+    {
+      "name": "personal-wbs-autolog",
+      "source": "./plugins/personal-wbs-autolog",
+      "description": "Optional, Claude Code: a SessionEnd hook queues a pointer to each finished session so its work can be logged to the ledger later, plus a read-only collector agent.",
+      "category": "productivity",
+      "tags": [
+        "wbs",
+        "work-log",
+        "hooks",
+        "claude-code"
+      ]
     }
   ]
 }

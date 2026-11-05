@@ -9,7 +9,7 @@ _Screenshot placeholder: dashboard board view (docs/screenshot.png)_
 ## What it is
 
 - **A personal work-breakdown structure (WBS) ledger.** `wbs.csv` holds every deliverable, decision and event of your work and life admin, all years in one file, in a code tree: area → package → task → step (`1.2.3.4`).
-- **Kept by agents.** Three Agent Skills let Claude (Claude Code, claude.ai) or any agent that reads `SKILL.md` build the ledger from your sources, log new work silently after each task, and sweep for anything that was missed.
+- **Kept by agents.** Five Agent Skills let Claude (Claude Code, Cowork, claude.ai) or any agent that reads `SKILL.md` build the ledger from your sources, log new work silently after each task, sweep for anything that was missed, show today's one-minute view, and set up the daily and weekly background runs.
 - **A dashboard that is one HTML file.** No server and no account: it reads the CSV files next to it and computes everything in the browser.
   - **Board**: today's open work, what is blocked, overdue or due soon, your focus packages.
   - **Health check**: ten indicators read against reference ranges, like a lab panel, partly against your own past year, with a verdict, prescriptions and a re-check date.
@@ -52,7 +52,7 @@ Then say "Build my WBS ledger" (or run `/personal-wbs:wbs-bootstrap`). The skill
 
 ### claude.ai
 
-1. Build the skill zips: `python3 scripts/package_skills.py` writes `dist/wbs-bootstrap.zip`, `dist/wbs-tracker.zip` and `dist/wbs-sweep.zip`. Each holds the skill folder plus the helper scripts, because an uploaded skill sees only its own folder.
+1. Build the skill zips: `python3 scripts/package_skills.py` writes one zip per skill to `dist/` (`wbs-bootstrap`, `wbs-tracker`, `wbs-sweep`, `wbs-today`, `wbs-schedule`). Each holds the skill folder plus the helper scripts, because an uploaded skill sees only its own folder.
 2. Upload each zip in **Settings → Capabilities → Skills** (called **Customize → Skills** in newer versions) and turn the skills on. Code execution must be enabled.
 3. Ask "Build my WBS ledger".
 
@@ -60,7 +60,15 @@ You can also zip a skill folder by hand (from `skills/`: `zip -r wbs-tracker.zip
 
 ### Any agent that reads Agent Skills
 
-Point it at `skills/*/SKILL.md`. The scripts are Python 3 with the standard library only and take the ledger folder as their argument.
+Point it at `skills/*/SKILL.md`. The scripts are Python 3 with the standard library only and take the ledger folder as their argument. Install steps for Gemini CLI, OpenAI Codex and Grok Build are in [docs/ports.md](docs/ports.md).
+
+### Optional: log sessions automatically (Claude Code)
+
+```
+/plugin install personal-wbs-autolog@personal-wbs
+```
+
+A separate plugin. When a Claude Code session ends, a hook notes only its ID, time, folder and transcript path on your computer; when you agree, the `wbs-autolog-drain` skill logs the work of those sessions. See [plugins/personal-wbs-autolog](plugins/personal-wbs-autolog/README.md).
 
 ### Try the sample
 
@@ -73,7 +81,7 @@ python3 scripts/make_agent_files.py sample --as-of 2026-11-06 # summary.json and
 python3 scripts/reconcile.py list sample/en --as-of 2026-11-06
 ```
 
-To view it, copy the dashboard page from `templates/dashboard/` into `sample/en` and serve the folder: `python3 -m http.server -d sample/en`.
+The dashboard page is not in the repository yet: at about 0.6 MB it is over the plugin directory's 256 KiB limit per file, so it will ship as a release download (see [templates/dashboard](templates/dashboard/README.md)). It reads the CSV files of a folder such as `sample/en`.
 
 ## The skills
 
@@ -82,6 +90,8 @@ To view it, copy the dashboard page from `templates/dashboard/` into `sample/en`
 | `wbs-bootstrap` | you start a ledger, or rebuild one | permissions checklist, inventory of sources, taxonomy sign-off, exhaustive historical import, atomization, events, status check with you, dashboard, scheduled daily and weekly runs |
 | `wbs-tracker` | after any task that produced a result; when you ask about your work | logs each result silently as an atomic, dated row with evidence; answers "what is open, blocked, overdue, finished"; runs the weekly health check |
 | `wbs-sweep` | daily collection, finding unlogged work, backfilling a year | resumable source × month sweep with coverage states, snowballing, the range-row atomization pass and re-checks of undated rows |
+| `wbs-today` | you ask what to do today, or a daily summary runs | today's top three tasks, what is late or blocked, at most three decisions; changes the ledger only for the decisions you answer |
+| `wbs-schedule` | you want the ledger to update itself | ready prompts for the daily collection, the weekly review and a daily summary, with the steps in Cowork, the Claude app or Claude Code; creates a schedule only when you ask |
 
 | Script | Purpose |
 |---|---|
@@ -90,6 +100,10 @@ To view it, copy the dashboard page from `templates/dashboard/` into `sample/en`
 | `reconcile.py list/apply <folder>` | the status check: lists open tasks in batches, writes your answers back |
 | `sample_data.py` | regenerates the synthetic sample |
 | `package_skills.py` | zips each skill with the scripts for upload |
+
+### Tests
+
+`evals/` holds behaviour tests for `claude plugin eval`: each skill fires on the right request and stays out of unrelated ones, and three outcomes on three days become three dated rows, never one range row. See [evals/README.md](evals/README.md).
 
 ## Data model
 
@@ -123,8 +137,9 @@ The 22 columns of `wbs.csv` (English headers; Korean headers in brackets):
 | **Sends** | Nothing to the author or to any other service: no server, no telemetry, no analytics. The one write that leaves Claude is the commit to your own Git repository, made only if you chose that location and asked for it. |
 | **Personal data** | Read through your connectors to find your work, not stored. Rows describe the work and name organisations and roles, never other people's names, e-mail addresses or phone numbers (`validate.py` warns if one slips in). |
 | **Retention** | Nothing is kept outside your own files. |
+| **Optional autolog** | The separate `personal-wbs-autolog` plugin writes, on your computer only, the ID, time, folder and transcript path of each finished Claude Code session to its own data folder. Transcripts are read only when you approve logging them. |
 
-The full policy is in [PRIVACY.md](PRIVACY.md).
+The full policy is in [PRIVACY.md](PRIVACY.md); the data flow is drawn in [docs/data-flow.md](docs/data-flow.md), and security reporting is in [SECURITY.md](SECURITY.md).
 
 
 - **Your data stays where you put it**: a local folder, a private repository or a private artifact. There is no server; the dashboard computes in your browser.
@@ -139,24 +154,28 @@ The full policy is in [PRIVACY.md](PRIVACY.md).
 
 ```
 personal-wbs/
-├── .claude-plugin/          marketplace.json, plugin.json (Claude Code plugin marketplace)
+├── .claude-plugin/          marketplace.json, plugin.json, icon.png (Claude plugin marketplace)
 ├── skills/
 │   ├── wbs-bootstrap/SKILL.md
 │   ├── wbs-tracker/SKILL.md
-│   └── wbs-sweep/SKILL.md
+│   ├── wbs-sweep/SKILL.md
+│   ├── wbs-today/SKILL.md
+│   └── wbs-schedule/SKILL.md
 ├── scripts/                 validate.py, make_agent_files.py, reconcile.py, sample_data.py,
 │                            package_skills.py, wbs_schema.py (Python 3, standard library)
+├── evals/                   behaviour tests for claude plugin eval
+├── plugins/personal-wbs-autolog/   optional Claude Code plugin: session-end hook, collector agent, drain skill
 ├── sample/en, sample/ko     synthetic sample ledger and generated agent files
-├── templates/dashboard/     the dashboard pages
-├── docs/                    taxonomy guide (English, Korean, Simplified Chinese)
-├── tools/, i18n/            dashboard language build (one source, translations in i18n/)
-├── README.md, README.ko.md, README.zh-CN.md
+├── templates/dashboard/     notes on the dashboard page
+├── docs/                    taxonomy guide (en, ko, zh-CN), research, data flow, other agents
+├── gemini-extension.json    Gemini CLI extension manifest
+├── README.md, README.ko.md, README.zh-CN.md, PRIVACY.md, SECURITY.md
 └── LICENSE
 ```
 
 ## Roadmap
 
-- Dashboard: `index.html` (English), `index.ko.html` and `index.zh-CN.html` are generated from one source with `tools/build_i18n.py` and `i18n/*.json`; more interface languages through new translation files.
+- Dashboard: ship the page in files under 256 KiB so it can live inside the plugin; it already switches between English, Korean and Simplified Chinese at runtime.
 - Ledger headers in more languages (today: English and Korean).
 - Recipes for more sources (issue trackers, other mail and calendar providers, note apps).
 - Automated tests and CI for the scripts, and a machine-readable schema file.
@@ -174,8 +193,11 @@ Issues and pull requests are welcome.
 python3 scripts/sample_data.py
 python3 scripts/validate.py sample --strict
 python3 scripts/make_agent_files.py sample --as-of 2026-11-06
-claude plugin validate .
+claude plugin validate --strict .
+claude plugin validate --strict plugins/personal-wbs-autolog
 ```
+
+Behaviour tests call the model and count against your usage: `claude plugin eval . --scaffold --allow-tools Write Edit "Bash(python3 *)"`.
 
 ## License
 

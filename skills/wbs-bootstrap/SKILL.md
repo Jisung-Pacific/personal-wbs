@@ -161,7 +161,7 @@ Imported records lag reality: work finished outside the sources, or never writte
 
 ### Step 10. Schedule background tracking
 
-So the user never has to ask for things to be added, set up two recurring runs (pick minutes off :00 and :30):
+So the user never has to ask for things to be added, set up two recurring runs (pick minutes off :00 and :30). The `wbs-schedule` skill has the ready prompts and the steps for each app; create a schedule only when the user explicitly asks:
 - **Daily collection**, e.g. 21:17 local: "Use the wbs-sweep skill in catch-up mode: enumerate the last 48 hours of every source, log new work atomically with the wbs-tracker rules, validate, regenerate the agent files, publish. Report only what needs my answer."
 - **Weekly review**, e.g. Monday 08:43: "Use the wbs-tracker skill to run the weekly health check, update plan.csv, publish, and send me the summary."
 

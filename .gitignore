@@ -5,3 +5,6 @@ __pycache__/
 # your own ledger, if you keep it inside a clone of this repository
 my-ledger/
 sweep_state.json
+
+# eval run output
+evals/results/

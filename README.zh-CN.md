@@ -9,7 +9,7 @@ _截图占位：仪表盘看板视图（docs/screenshot.png）_
 ## 这是什么
 
 - **个人工作分解结构（WBS）台账。** `wbs.csv` 记录你工作和生活事务中的每一个交付物、决定和事件，所有年份放在同一个文件里，按"领域 → 工作包 → 任务 → 步骤"（`1.2.3.4`）的编码树组织。
-- **由智能体维护。** 三个 Agent Skills（技能）让 Claude（Claude Code、claude.ai）或任何能读取 `SKILL.md` 的智能体从你的数据来源建立台账，在每项工作完成后静默记录，并找出遗漏的工作。
+- **由智能体维护。** 五个 Agent Skills（技能）让 Claude（Claude Code、Cowork、claude.ai）或任何能读取 `SKILL.md` 的智能体从你的数据来源建立台账，在每项工作完成后静默记录，找出遗漏的工作，一分钟内给出今天要做的事，并设置每日和每周的自动运行。
 - **只有一个 HTML 文件的仪表盘。** 不需要服务器，也不需要账号：它读取同一文件夹中的 CSV 文件，所有计算都在浏览器中完成。
   - **看板**：今天未完成的工作、被阻塞的事项、已逾期或即将到期的事项、重点工作包。
   - **体检**：像化验单一样，把十项指标与参考范围（部分来自你自己过去一年的记录）比较，给出判定、处方和复查日期。
@@ -52,7 +52,7 @@ _截图占位：仪表盘看板视图（docs/screenshot.png）_
 
 ### claude.ai
 
-1. 生成技能压缩包：`python3 scripts/package_skills.py` 会写出 `dist/wbs-bootstrap.zip`、`dist/wbs-tracker.zip` 和 `dist/wbs-sweep.zip`。上传的技能只能看到自己文件夹里的文件，所以每个压缩包都包含技能文件夹和辅助脚本。
+1. 生成技能压缩包：`python3 scripts/package_skills.py` 会为每个技能在 `dist/` 中写出一个压缩包（`wbs-bootstrap`、`wbs-tracker`、`wbs-sweep`、`wbs-today`、`wbs-schedule`）。上传的技能只能看到自己文件夹里的文件，所以每个压缩包都包含技能文件夹和辅助脚本。
 2. 在 **Settings → Capabilities → Skills**（较新版本中为 **Customize → Skills**）逐个上传并启用。需要开启代码执行。
 3. 对 Claude 说"帮我建立 WBS 台账"。
 
@@ -60,7 +60,15 @@ _截图占位：仪表盘看板视图（docs/screenshot.png）_
 
 ### 其他能读取 Agent Skills 的智能体
 
-让它读取 `skills/*/SKILL.md` 即可。脚本只使用 Python 3 标准库，参数是台账所在的文件夹。
+让它读取 `skills/*/SKILL.md` 即可。脚本只使用 Python 3 标准库，参数是台账所在的文件夹。 Gemini CLI、OpenAI Codex 和 Grok Build 的安装方法见 [docs/ports.md](docs/ports.md)（英文）。
+
+### 可选：自动记录会话（Claude Code）
+
+```
+/plugin install personal-wbs-autolog@personal-wbs
+```
+
+这是一个单独的插件。Claude Code 会话结束时，钩子只在你的电脑上记下该会话的 ID、时间、文件夹和记录文件路径；你同意后，`wbs-autolog-drain` 技能会把这些会话中的工作记入台账。详见 [plugins/personal-wbs-autolog](plugins/personal-wbs-autolog/README.md)（英文）。
 
 ### 用示例数据试一试
 
@@ -73,7 +81,7 @@ python3 scripts/make_agent_files.py sample --as-of 2026-11-06 # 生成 summary.j
 python3 scripts/reconcile.py list sample/en --as-of 2026-11-06
 ```
 
-查看方法：把 `templates/dashboard/` 中的仪表盘页面（中文界面为 `index.zh-CN.html`）复制到 `sample/en`，然后启动本地服务：`python3 -m http.server -d sample/en`。
+仪表盘页面暂未放入仓库：它约 0.6 MB，超过插件目录对单个文件 256 KiB 的限制，因此将作为发布版下载单独提供（见 [templates/dashboard](templates/dashboard/README.md)）。它读取 `sample/en` 这类文件夹中的 CSV 文件。
 
 ## 技能
 
@@ -82,6 +90,8 @@ python3 scripts/reconcile.py list sample/en --as-of 2026-11-06
 | `wbs-bootstrap` | 第一次建立或重建台账时 | 授权清单、来源盘点、分类体系确认、完整历史导入、原子化、事件重建、与你核对状态、仪表盘、安排每日和每周的后台运行 |
 | `wbs-tracker` | 每完成一项产生结果的工作后；当你询问自己的工作时 | 把结果静默记录为带日期和证据的原子行；回答未完成、被阻塞、逾期、已完成的问题；执行每周体检 |
 | `wbs-sweep` | 每日收集、查找漏记的工作、补录某一年 | 按"来源 × 月份"窗口进行可续跑的穷尽清查（覆盖状态、滚雪球式追查）、区间行原子化、无日期行复查 |
+| `wbs-today` | 询问今天做什么时；每日摘要运行时 | 今天最重要的三项任务、逾期或受阻的工作、最多三个待你决定的事项；只把你回答的决定写入台账 |
+| `wbs-schedule` | 希望台账自动更新时 | 每日收集、每周回顾和每日摘要的现成提示词，以及在 Cowork、Claude 应用或 Claude Code 中的设置步骤；只有你要求时才创建定时任务 |
 
 | 脚本 | 用途 |
 |---|---|
@@ -90,6 +100,10 @@ python3 scripts/reconcile.py list sample/en --as-of 2026-11-06
 | `reconcile.py list/apply <文件夹>` | 状态核对：分批列出未完成任务，并把你的回答写回台账 |
 | `sample_data.py` | 重新生成虚构示例数据 |
 | `package_skills.py` | 把每个技能连同脚本打包，便于上传 |
+
+### 测试
+
+`evals/` 中是供 `claude plugin eval` 使用的行为测试：检查每个技能在合适的请求下启用、在无关请求下不启用，以及三天里的三项成果被记为三行带日期的记录，而不是一行区间记录。详见 [evals/README.md](evals/README.md)（英文）。
 
 ## 数据模型
 
@@ -123,8 +137,9 @@ python3 scripts/reconcile.py list sample/en --as-of 2026-11-06
 | **发送** | 不向作者或任何其他服务发送任何内容：没有服务器、没有遥测、没有分析。唯一离开 Claude 的写入，是在你选择了该位置并提出要求时，提交到你自己的 Git 仓库。 |
 | **个人数据** | 只为找到你的工作而通过连接的应用读取，不会保存。每一行只描述工作并写机构和角色，从不写他人的姓名、邮箱或电话号码（`validate.py` 发现时会警告）。 |
 | **保留** | 除你自己的文件外，不保留任何内容。 |
+| **可选：自动记录** | 单独的 `personal-wbs-autolog` 插件只在你的电脑上、在它自己的数据文件夹中记下每个结束的 Claude Code 会话的 ID、时间、文件夹和记录文件路径；只有你同意记录时才读取会话记录。 |
 
-完整政策见 [PRIVACY.md](PRIVACY.md)。
+完整政策见 [PRIVACY.md](PRIVACY.md)；数据流向图见 [docs/data-flow.md](docs/data-flow.md)，安全问题报告方式见 [SECURITY.md](SECURITY.md)（英文）。
 
 
 - **数据留在你放置的地方**：本地文件夹、私有仓库或私有 artifact。没有服务器，仪表盘在你的浏览器中计算。
@@ -139,24 +154,28 @@ python3 scripts/reconcile.py list sample/en --as-of 2026-11-06
 
 ```
 personal-wbs/
-├── .claude-plugin/          marketplace.json、plugin.json（Claude Code 插件市场）
+├── .claude-plugin/          marketplace.json、plugin.json、icon.png（Claude 插件市场）
 ├── skills/
 │   ├── wbs-bootstrap/SKILL.md
 │   ├── wbs-tracker/SKILL.md
-│   └── wbs-sweep/SKILL.md
+│   ├── wbs-sweep/SKILL.md
+│   ├── wbs-today/SKILL.md
+│   └── wbs-schedule/SKILL.md
 ├── scripts/                 validate.py、make_agent_files.py、reconcile.py、sample_data.py、
 │                            package_skills.py、wbs_schema.py（Python 3，仅标准库）
+├── evals/                   供 claude plugin eval 使用的行为测试
+├── plugins/personal-wbs-autolog/   可选的 Claude Code 插件：会话结束钩子、收集智能体、记录技能
 ├── sample/en、sample/ko     虚构示例台账及生成的智能体文件
-├── templates/dashboard/     仪表盘页面
-├── docs/                    分类体系指南（英文、韩文、简体中文）
-├── tools/、i18n/            仪表盘多语言构建（一份源文件，翻译放在 i18n/）
-├── README.md、README.ko.md、README.zh-CN.md
+├── templates/dashboard/     仪表盘页面说明
+├── docs/                    分类体系指南（英文、韩文、简体中文）、研究依据、数据流向、其他智能体
+├── gemini-extension.json    Gemini CLI 扩展清单
+├── README.md、README.ko.md、README.zh-CN.md、PRIVACY.md、SECURITY.md
 └── LICENSE
 ```
 
 ## 路线图
 
-- 仪表盘：`index.html`（英文）、`index.ko.html` 和 `index.zh-CN.html` 由同一份源文件通过 `tools/build_i18n.py` 和 `i18n/*.json` 生成；增加翻译文件即可支持更多界面语言。
+- 仪表盘：把页面拆成小于 256 KiB 的文件，以便放入插件；界面语言（英文、韩文、简体中文）已可在运行时切换。
 - 台账列名支持更多语言（目前为英文和韩文）。
 - 更多来源的收集方法（问题跟踪工具、其他邮件和日历服务、笔记应用）。
 - 脚本的自动化测试与 CI，以及机器可读的数据结构定义文件。
@@ -174,8 +193,11 @@ personal-wbs/
 python3 scripts/sample_data.py
 python3 scripts/validate.py sample --strict
 python3 scripts/make_agent_files.py sample --as-of 2026-11-06
-claude plugin validate .
+claude plugin validate --strict .
+claude plugin validate --strict plugins/personal-wbs-autolog
 ```
+
+行为测试会调用模型，计入你的用量：`claude plugin eval . --scaffold --allow-tools Write Edit "Bash(python3 *)"`。
 
 ## 许可证
 

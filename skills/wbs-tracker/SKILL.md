@@ -101,6 +101,7 @@ Read `summary.json` first (regenerate it if it is older than the CSV files); `ll
 - "What did I finish this week / month?": `recent_completions`.
 - Per year: leaf count, completion rate, key results (date and one line each), busiest packages.
 - Default scope is the current year; say so, and cover other years when asked. When the user wants the dashboard, open or link it.
+- "What should I do today?" or a one-minute status: use the `wbs-today` skill (top three, late or blocked, at most three decisions).
 
 ## Weekly health check
 

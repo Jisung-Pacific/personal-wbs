@@ -1,0 +1,5 @@
+{
+  "name": "personal-wbs",
+  "version": "0.2.0",
+  "description": "Keep one ledger of all your work across years: bootstrap it from your sources, log new work silently, sweep for anything missed, see today's view and run a weekly health check."
+}
