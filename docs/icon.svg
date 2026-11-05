@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Personal WBS icon: an octopus clerk gathers work from chats, mail, calendars and docs into one ledger -->
+  <defs>
+    <radialGradient id="bg" cx="0.5" cy="0.42" r="0.75"><stop offset="0" stop-color="#FFF2F7"/><stop offset="1" stop-color="#E4D7FF"/></radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- arms (drawn under the head; tips are tucked behind what they hold) -->
+  <g fill="none" stroke="#FF8A9B" stroke-width="72" stroke-linecap="round">
+    <path d="M330 600 C 255 625, 205 585, 178 505"/>
+    <path d="M350 650 C 300 735, 240 765, 185 748"/>
+    <path d="M694 600 C 769 625, 819 585, 846 505"/>
+    <path d="M674 650 C 724 735, 784 765, 839 748"/>
+    <path d="M462 680 C 452 760, 436 806, 420 842"/>
+    <path d="M562 680 C 572 760, 588 806, 604 842"/>
+  </g>
+  <g fill="#FFC9D2">
+    <circle cx="232" cy="606" r="10"/><circle cx="268" cy="622" r="10"/><circle cx="262" cy="742" r="10"/><circle cx="300" cy="716" r="10"/>
+    <circle cx="792" cy="606" r="10"/><circle cx="756" cy="622" r="10"/><circle cx="762" cy="742" r="10"/><circle cx="724" cy="716" r="10"/>
+  </g>
+  <!-- chat bubble -->
+  <g>
+    <path d="M72 386 h164 a30 30 0 0 1 30 30 v70 a30 30 0 0 1 -30 30 h-104 l-44 36 l8 -36 h-24 a30 30 0 0 1 -30 -30 v-70 a30 30 0 0 1 30 -30 z" fill="#FFFFFF" stroke="#D7C9F3" stroke-width="8" stroke-linejoin="round"/>
+    <circle cx="118" cy="451" r="14" fill="#9B82E0"/><circle cx="160" cy="451" r="14" fill="#9B82E0"/><circle cx="202" cy="451" r="14" fill="#9B82E0"/>
+  </g>
+  <!-- envelope -->
+  <g>
+    <rect x="76" y="678" width="176" height="124" rx="18" fill="#FFFFFF" stroke="#D7C9F3" stroke-width="8"/>
+    <path d="M90 694 L164 752 L238 694" fill="none" stroke="#FF6F7F" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- calendar -->
+  <g>
+    <rect x="782" y="376" width="176" height="150" rx="20" fill="#FFFFFF" stroke="#D7C9F3" stroke-width="8"/>
+    <path d="M782 412 a20 20 0 0 1 20 -36 h136 a20 20 0 0 1 20 20 v18 h-176 z" fill="#FF6F7F"/>
+    <rect x="782" y="396" width="176" height="22" fill="#FF6F7F"/>
+    <g fill="#CDBFEA"><circle cx="824" cy="452" r="10"/><circle cx="866" cy="452" r="10"/><circle cx="908" cy="452" r="10"/><circle cx="824" cy="490" r="10"/><circle cx="866" cy="490" r="10"/></g>
+    <circle cx="908" cy="490" r="15" fill="#3DBE84"/>
+  </g>
+  <!-- document -->
+  <g>
+    <path d="M790 664 h104 l46 46 v124 a18 18 0 0 1 -18 18 h-132 a18 18 0 0 1 -18 -18 v-152 a18 18 0 0 1 18 -18 z" fill="#FFFFFF" stroke="#D7C9F3" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M894 664 v30 a16 16 0 0 0 16 16 h30" fill="#EFE8FB" stroke="#D7C9F3" stroke-width="8" stroke-linejoin="round"/>
+    <rect x="804" y="728" width="104" height="13" rx="6.5" fill="#CDBFEA"/><rect x="804" y="758" width="84" height="13" rx="6.5" fill="#CDBFEA"/><rect x="804" y="788" width="104" height="13" rx="6.5" fill="#CDBFEA"/>
+  </g>
+  <!-- the ledger: an open book with neat entries -->
+  <g>
+    <path d="M512 846 C 460 826, 400 822, 334 832 v118 c 66 -10, 126 -6, 178 14 z" fill="#FFF4D6" stroke="#E9C77F" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M512 846 C 564 826, 624 822, 690 832 v118 c -66 -10, -126 -6, -178 14 z" fill="#FFF4D6" stroke="#E9C77F" stroke-width="8" stroke-linejoin="round"/>
+    <rect x="360" y="864" width="118" height="12" rx="6" fill="#5CC48F"/><rect x="360" y="892" width="90" height="12" rx="6" fill="#FFC23D"/><rect x="360" y="920" width="110" height="12" rx="6" fill="#8CC2FF"/>
+    <rect x="546" y="864" width="118" height="12" rx="6" fill="#B49CEB"/><rect x="546" y="892" width="96" height="12" rx="6" fill="#5CC48F"/>
+  </g>
+  <!-- arm tips wrapping what they hold -->
+  <g fill="#FF8A9B"><circle cx="246" cy="512" r="27"/><circle cx="256" cy="770" r="27"/><circle cx="778" cy="512" r="27"/><circle cx="770" cy="782" r="27"/><circle cx="420" cy="842" r="27"/></g>
+  <!-- a pencil in the last arm, writing a new line -->
+  <g transform="rotate(32 640 860)">
+    <rect x="618" y="770" width="34" height="112" rx="6" fill="#FFC23D"/><rect x="618" y="770" width="34" height="20" rx="6" fill="#FF8A9B" opacity="0.9"/>
+    <path d="M618 882 h34 l-17 34 z" fill="#F6D7A7"/><path d="M629 904 h12 l-6 12 z" fill="#3B3150"/>
+  </g>
+  <circle cx="604" cy="842" r="27" fill="#FF8A9B"/>
+  <!-- head -->
+  <path d="M262 470 C 262 262, 382 140, 512 140 C 642 140, 762 262, 762 470 C 762 612, 660 690, 512 690 C 364 690, 262 612, 262 470 Z" fill="#FF8A9B"/>
+  <ellipse cx="418" cy="262" rx="54" ry="30" fill="#FFB2BF" opacity="0.9"/>
+  <circle cx="640" cy="300" r="17" fill="#FFB2BF"/><circle cx="598" cy="232" r="10" fill="#FFB2BF"/>
+  <!-- face -->
+  <circle cx="430" cy="452" r="60" fill="#FFFFFF"/><circle cx="594" cy="452" r="60" fill="#FFFFFF"/>
+  <circle cx="438" cy="464" r="36" fill="#2E2545"/><circle cx="586" cy="464" r="36" fill="#2E2545"/>
+  <circle cx="451" cy="449" r="13" fill="#FFFFFF"/><circle cx="599" cy="449" r="13" fill="#FFFFFF"/>
+  <ellipse cx="366" cy="548" rx="36" ry="19" fill="#FF5A76" opacity="0.42"/><ellipse cx="658" cy="548" rx="36" ry="19" fill="#FF5A76" opacity="0.42"/>
+  <path d="M478 566 q34 36 68 0" fill="none" stroke="#2E2545" stroke-width="15" stroke-linecap="round"/>
+</svg>

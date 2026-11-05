@@ -2,7 +2,7 @@
   "name": "personal-wbs",
   "displayName": "Personal WBS",
   "description": "Keep one ledger of all your work across years: bootstrap it from your sources, log new work silently, sweep for anything missed, and check your work health every week.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": {
     "name": "Jisung Park"
   },
