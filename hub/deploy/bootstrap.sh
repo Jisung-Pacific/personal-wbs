@@ -31,7 +31,8 @@ cd "$(dirname "$0")/.."                                    # hub/
 TF_VERSION=1.9.8
 export PATH="$HOME/.local/bin:$PATH"
 for t in gcloud curl python3 git openssl; do type -P "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }; done
-if ! type -P terraform >/dev/null; then
+real_tf() { local v; v=$(terraform -version 2>/dev/null || true); [[ "$v" == "Terraform v"* ]]; }
+if ! real_tf; then   # absent, or Cloud Shell's stand-in that only prints install advice
   echo "== installing Terraform $TF_VERSION into ~/.local/bin"
   type -P unzip >/dev/null || { echo "missing tool: unzip"; exit 1; }
   TFD=$(mktemp -d); TFZ="terraform_${TF_VERSION}_linux_amd64.zip"
@@ -39,9 +40,10 @@ if ! type -P terraform >/dev/null; then
   curl -fsSLo "$TFD/sums" "https://releases.hashicorp.com/terraform/$TF_VERSION/terraform_${TF_VERSION}_SHA256SUMS"
   (cd "$TFD" && grep " $TFZ\$" sums | sha256sum -c -)
   mkdir -p "$HOME/.local/bin" && unzip -o -q "$TFD/$TFZ" terraform -d "$HOME/.local/bin" && rm -rf "$TFD"
+  hash -r
 fi
-type -P terraform >/dev/null || { echo "Terraform is not available"; exit 1; }
-terraform -version | sed -n 1p
+real_tf || { echo "Terraform is not available: $(type -P terraform || echo none)"; exit 1; }
+echo "using $(terraform -version 2>/dev/null | sed -n 1p) at $(type -P terraform)"
 SERVICE=ppwbs-hub
 TF=deploy/terraform
 PROJECT=${PROJECT:-$(gcloud config get-value project 2>/dev/null)}
