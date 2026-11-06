@@ -12,6 +12,7 @@ export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every ye
 - Write the task text in the user's language, concrete, with numbers; one result per row, never a summary of several.
 - Dates are YYYY-MM-DD (YYYY-MM when only the month is known). Status: 완료, 진행 중, 대기·심사 (waiting on others), 백로그 (parked by the user).
 - Leave out: amounts of pay, scholarships, prizes, personal transfers, property and equity; health; relationships; bank details; other people's personal handles.
+- Planning, advising or reviewing: call wbs_brief first and drill down only where it points (wbs_search, wbs_get); do not page through the ledger.
 - Record work silently in the background when the user finishes something concrete; mention it only if they ask.
 - The inbox holds raw material captured where no agent could write (chats on other AI sites, searches, notes). When asked to process it, read wbs_inbox_list, turn what is concrete work into rows with the rules above, and mark every item merged (with the codes) or skipped.`;
 
@@ -46,6 +47,12 @@ export function buildMcp(ledger: Ledger, actor: Actor, scopes: string[], version
       description: 'The packages (work streams) of one year with their area, goal, open tasks and the next free code. Pick the package here before wbs_add.',
       inputSchema: { year: z.string().regex(/^\d{4}$/) }, annotations: ro,
     }, async a => run(() => ledger.packages(actor.uid, a.year)));
+
+    server.registerTool('wbs_brief', {
+      title: 'Brief for planning and advice',
+      description: 'Start here to plan, advise or review: one compact picture of the ledger — status counts, six-month flow, where the effort went, open, overdue and soon-due work, what waits on others, work-style indicators (pace, time to finish, work in progress, weekday rhythm, area mix) and the signals worth acting on. About a thousand tokens; then drill down with wbs_search or wbs_get.',
+      inputSchema: { year: z.string().regex(/^\d{4}$/).optional().describe('Year for the counts; defaults to the current year (flows and work style use the last 90 days)') }, annotations: ro,
+    }, async a => run(() => ledger.brief(actor.uid, a.year)));
 
     server.registerTool('wbs_summary', {
       title: 'Summarize the ledger',

@@ -26,6 +26,7 @@ export function restRouter(ledger: Ledger, inbox: Inbox): Router {
     q: req.query.q as string | undefined, limit: req.query.limit ? Number(req.query.limit) : undefined })));
   r.get('/rows/:year/:code', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.get(req.actor!.uid, String(req.params.year), String(req.params.code))));
   r.get('/packages/:year', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.packages(req.actor!.uid, String(req.params.year))));
+  r.get('/brief', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.brief(req.actor!.uid, req.query.year as string | undefined)));
   r.get('/summary', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.summary(req.actor!.uid, req.query.year as string | undefined)));
   r.get('/export', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.exportCsv(req.actor!.uid)));
   r.post('/rows', need('wbs.write'), (req: Authed, res) => send(res, () => ledger.add(req.actor!, req.body)));
@@ -62,6 +63,7 @@ export function openapi(cfg: Config, version: string) {
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { status: { type: 'string', enum: ['완료', '진행 중', '대기·심사', '백로그'] }, end: { type: 'string' }, due: { type: 'string' }, importance: { type: 'string' }, blocker: { type: 'string' }, memo: { type: 'string' }, evidence: { type: 'string' } } } } } }, responses: { 200: { description: 'Updated' } } },
       },
       '/packages/{year}': { get: { operationId: 'listPackages', summary: 'Packages of a year and the next free codes', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Packages' } } } },
+      '/brief': { get: { operationId: 'brief', summary: 'Compact picture for planning and advice: status, flow, focus, open and due work, waiting items, work style, signals', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Brief' } } } },
       '/summary': { get: { operationId: 'summary', summary: 'Counts, open tasks, latest changes', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Summary' } } } },
       '/inbox': {
         post: { operationId: 'addToInbox', summary: 'Drop raw material (a chat, a search, a note) to be turned into rows later', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['items'], properties: { items: { type: 'array', maxItems: 100, items: { type: 'object', required: ['kind', 'source', 'at'], properties: {

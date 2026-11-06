@@ -7,6 +7,7 @@ import {
   DATE_RE, STATUSES, agentLabel, appendEvidence, codeKey, dateText, emptyRow, eventsFromCsv, eventsToCsv, mergeSource,
   overlap, rowsFromCsv, rowsToCsv, sortRows, todayKst, tokens,
 } from './model.js';
+import { buildBrief } from './brief.js';
 
 /** Who is writing: the signed-in account and the agent (OAuth client) acting for it. */
 export interface Actor { uid: string; clientName: string; evidence?: string }
@@ -99,6 +100,11 @@ export class Ledger {
       .sort((a, b) => (b.last_progress || b.start).localeCompare(a.last_progress || a.start)).slice(0, 15).map(brief);
     const recent = (await this.store.events(uid)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
     return { leaf_tasks: leaves.length, by_year_status: byYear, open_recent: open, recent_events: recent };
+  }
+
+  /** The compact picture a planning or advising agent starts from (wbs/brief.ts). */
+  async brief(uid: string, year?: string) {
+    return buildBrief(await this.store.rows(uid), { today: todayKst(), year });
   }
 
   /** Adds one row with the next free code. Refuses an obvious duplicate unless the caller says it is different work. */

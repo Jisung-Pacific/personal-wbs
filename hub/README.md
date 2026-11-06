@@ -71,17 +71,15 @@ firebase emulators:exec --only firestore "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
 
 ## Deploy (Cloud Run, Terraform, continuous)
 
-1. In Cloud Shell of the Firebase project, from a clone of this repository: `PROJECT=<id> bash hub/deploy/bootstrap.sh`.
-   Everything else is worked out: the service's own `run.app` address as the issuer, the project's web config and its
-   switched-on sign-in providers (Google, Apple, OIDC providers such as Kakao, email), Terraform state in a versioned
-   bucket of the project, and this clone's repository and branch for continuous deploys. `PLAN_ONLY=1` prints the full
-   plan and creates nothing. It stops for your `yes` before every apply and creates only new resources: the database,
-   rules, TTL, KMS key, service account, the service and the keyless CI deployer.
-2. Set the printed `ci_variables` as GitHub repository variables. From then on every push to the deploy ref that touches
-   `hub/` is tested, built and rolled out (`.github/workflows/hub-deploy.yml`).
-3. Firebase Auth: add the hub's host name to Authorized domains (in the project's own Terraform if it keeps the list there).
-4. Your own domain: put a reverse proxy in front (`deploy/cloudflare`; Cloud Run domain mapping is not offered in every
-   region), rerun bootstrap with `PROXY=1 PUBLIC_URL=https://<domain>` before anyone connects, since the issuer is fixed.
+1. Pick the project, region (a Firestore location cannot change later) and the public URL (it is the OAuth issuer;
+   changing it later signs every connected agent out).
+2. In Cloud Shell, from a clone of this repository, run `hub/deploy/bootstrap.sh` with the variables listed at its top.
+   It enables the APIs, writes an untracked `hub.auto.tfvars`, creates the image registry, the KMS key and the signing-key
+   secret, builds the first image, adds a signing key, and applies the rest (database, rules, TTL, service account, the
+   service, and the keyless CI deployer when `GITHUB_REPOSITORY` is set). Every Terraform plan is shown before it applies.
+3. Set the printed `ci_variables` as GitHub repository variables. From then on every push to the deploy ref that touches
+   `hub/` is tested, built and rolled out (`.github/workflows/hub-deploy.yml`); there is no staging step.
+4. Firebase Auth: add the hub's domain to Authorized domains; map the domain to the service if it is your own.
 5. Import an existing ledger: `GOOGLE_CLOUD_PROJECT=… HUB_KMS_KEY=… node dist/scripts/import.js <uid> wbs.csv events.csv`.
 6. Connect Claude first, then the other agents.
 
