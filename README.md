@@ -31,11 +31,11 @@ Planning tools ask you to describe work before you do it, then drift away from r
 
 ## How onboarding works
 
-The `wbs-bootstrap` skill builds the ledger in one guided session:
+The `wbs-bootstrap` skill builds the ledger in stages. **First look:** it collects only the last 3 months, in one session, and shows the dashboard with three headline findings. **Then it asks** how to continue: *full power now* (the last 12 months, then all history, with your session's model as lead planner and 2 or 3 parallel Sonnet workers that only read), *steady in the background* (1 or 2 background agents walk backwards a few windows per run). Either mode can pause, but the collection goes to the end, new work keeps being collected in the background, and you are shown what was added once a week. The steps below run on the 3 months first and on older history later:
 
 1. **Permissions first.** Connect every source you have (past chats and memory, Google Drive, Gmail, Calendar, Slack, Notion, GitHub, a ChatGPT export) and allow the skills' tools once, so background runs never stall. The completeness of the first import decides the ledger's quality.
 2. **Taxonomy sign-off.** The agent skims titles across your history and proposes 4–7 areas, packages per year and a short goal list. Nothing is written until you approve. See the [taxonomy guide](docs/taxonomy.md).
-3. **Full historical import.** Every source × month is a window, enumerated by ID, oldest first, with coverage tracked in `coverage.csv`.
+3. **Import by window.** Every source × month is a window, enumerated by ID, oldest first within the range being collected (3 months first, then 12 months, then older years), with coverage tracked in `coverage.csv`.
 4. **Atomization.** Rows that bundle several outcomes or span long periods are re-read and split into dated steps.
 5. **Status check.** Imported records lag reality, so the agent asks you, ten tasks at a time, which open tasks are already done, blocked or parked, with likely answers pre-filled from evidence. You can also do this in the dashboard's Status check mode.
 6. **Background runs.** A daily collection and a weekly review are scheduled, so you never have to ask for things to be added.
@@ -88,7 +88,7 @@ The dashboard page is not in the repository yet: at about 0.6 MB it is over the 
 
 | Skill | Use it when | What it does |
 |---|---|---|
-| `wbs-bootstrap` | you start a ledger, or rebuild one | permissions checklist, inventory of sources, taxonomy sign-off, exhaustive historical import, atomization, events, status check with you, dashboard, scheduled daily and weekly runs |
+| `wbs-bootstrap` | you start a ledger, or rebuild one | permissions checklist, inventory of sources, taxonomy sign-off, staged historical import (3-month first look, then 12 months and older years), atomization, events, status check with you, dashboard, scheduled daily and weekly runs |
 | `wbs-tracker` | after any task that produced a result; when you ask about your work | logs each result silently as an atomic, dated row with evidence; answers "what is open, blocked, overdue, finished"; runs the weekly health check |
 | `wbs-sweep` | daily collection, finding unlogged work, backfilling a year | resumable source × month sweep with coverage states, snowballing, the range-row atomization pass and re-checks of undated rows |
 | `wbs-today` | you ask what to do today, or a daily summary runs | today's top three tasks, what is late or blocked, at most three decisions; changes the ledger only for the decisions you answer |

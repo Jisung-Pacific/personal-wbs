@@ -1,12 +1,12 @@
 ---
 name: wbs-bootstrap
-description: Build a personal work-breakdown ledger (wbs.csv) from scratch in one go. Connect every source first, agree a taxonomy with the user, import all past work as atomic, exactly dated rows with evidence, confirm current status with the user, then schedule daily collection and a weekly review. Use when someone wants to start a WBS, work log or "record of everything I have done", or to rebuild one.
+description: Build a personal work-breakdown ledger (wbs.csv) in stages. Start with a fast first look: collect only the last 3 months from the connected sources, agree a light taxonomy, import atomic, exactly dated rows with evidence, reconcile open tasks, and show a dashboard with three headline findings. Then ask how to continue: full power now (12 months, then all history, a lead session plus parallel Sonnet workers) or steady in the background (1-2 agents walking backwards a few windows per run). Either mode can pause, but collection always goes to the end, new work keeps being collected daily, and updates are shown weekly. Use when someone wants to start a WBS, work log or record of everything they have done, or to rebuild one.
 license: MIT
 ---
 
 # Bootstrap a personal WBS ledger
 
-You build one ledger of everything the user has done, across all years, from the sources you can reach, and you leave it maintained by background runs. The ledger is **raw data first**: rows record what happened, when, and where the evidence is. Every summary, rollup, health check or topic map is computed later from those rows by the dashboard and the agent files, and never stored as a row.
+You build one ledger of everything the user has done, across all years, from the sources you can reach, and you leave it maintained by background runs. You build it in stages: a fast first look at the last 3 months so the user sees value within one session, then a choice of how fast to go back through the rest of the history. The ledger is **raw data first**: rows record what happened, when, and where the evidence is. Every summary, rollup, health check or topic map is computed later from those rows by the dashboard and the agent files, and never stored as a row.
 
 Other skills in this package: `wbs-tracker` logs new work after each task and runs the weekly health check; `wbs-sweep` resumes the exhaustive sweep and runs the daily collection. Follow their rules once the ledger exists.
 
@@ -70,39 +70,54 @@ Other skills in this package: `wbs-tracker` logs new work after each task and ru
 
 ## Procedure
 
-Work through the steps in order. Steps 3 to 7 can span several runs; write files after every window so any run can stop and resume.
+The onboarding has four stages. Early impact comes first; completeness comes next and does not stop until every window is `complete` or `unavailable`.
 
-### Step 0. Permissions checklist (before anything else)
+| Stage | What happens | Steps |
+|---|---|---|
+| 1. First look | Collect and refine only the last 90 days, then show the result. Target: one session, so the user sees value before being asked for more. | 0 to 10 |
+| 2. Ask | Right after the result, ask how to continue. | 11 |
+| 3. Expand | Last 12 months, then older years, newest first, until the whole history is covered. | 12 |
+| 4. Keep going | New work is collected in the background; the user is shown updates once a week. | 13, 14 |
 
-Tell the user why: **the completeness of the first import decides the ledger's quality.** A source that is not connected now is missing from every count, chart and health check later, and some sources forget (free Slack keeps about 90 days, local transcripts are pruned). Then go through the list in one message and wait until it is done:
+Steps 4 to 9 are the same in every stage: whatever a stage writes passes through dedupe, atomization, events, validation and publishing. Write files after every window so any run can stop and resume.
+
+## Stage 1. First look (last 90 days)
+
+Set `cutoff` = today minus 90 days. Every step below applies only to items dated on or after `cutoff`. Do not ask for the full history yet.
+
+### Step 0. Permissions checklist (trimmed to the 3-month pass)
+
+Tell the user why: **a source that is not connected is missing from every count, chart and health check, and some sources forget** (free Slack keeps about 90 days, local transcripts are pruned). For the first look, ask only for what the last 90 days need: the first four items below, in one message, then wait. The ChatGPT export and the extra repositories can come later; ask for them in Step 11. The Slack and Claude Code items matter most to ask early, because their history expires.
 
 - [ ] Past chats: chat search and memory turned on in the app's settings; for Claude Code, the local session transcripts (`~/.claude/projects/`, one JSONL per session, kept about 30 days by default unless `cleanupPeriodDays` is raised). Users without chat search can upload a data export (Claude: Settings → Privacy → Export data).
 - [ ] Connectors the user has: Google Drive, Gmail, Google Calendar, Slack, Notion, GitHub (or `gh auth status` for the CLI), plus any other work tool.
-- [ ] A ChatGPT data export if they used ChatGPT (Settings → Data controls → Export data; the link arrives by e-mail, so ask now and continue meanwhile).
-- [ ] Local folders and repositories to include, and the accounts or organisations to cover on GitHub.
 - [ ] Where the ledger will live: a claude.ai artifact, a local folder, or a private Git repository (needed for cloud-scheduled runs). Write it into a config note the agent always sees (CLAUDE.md, project instructions or memory): `WBS ledger: <artifact URL | folder path | owner/repo>`.
 - [ ] Tool permissions, granted once so later background runs never stall on a prompt. In Claude Code add allow rules to `~/.claude/settings.json`, for example `"permissions": {"allow": ["Bash(python3 *)", "Bash(gh api *)", "Bash(gh repo list *)", "Bash(git clone *)", "Bash(git log *)", "mcp__<server>__search_*", "mcp__<server>__read_*"]}` (server names from `/mcp`; narrow the rules if you prefer). In claude.ai, set the connectors' read tools to always allowed and turn on code execution.
+
+Ask in Step 11, not now (they only matter for older windows, and the export takes time, so the user may request it while reading the first result):
+- [ ] A ChatGPT data export if they used ChatGPT (Settings → Data controls → Export data; the link arrives by e-mail).
+- [ ] Local folders and repositories to include, and the accounts or organisations to cover on GitHub (the 90-day pass uses the repositories the user names or that `gh repo list` shows with recent pushes).
 
 Record every source that stays unavailable in coverage.csv as `unavailable` with the reason, and tell the user what the ledger will miss.
 
 ### Step 1. Set up and take inventory
 
 1. Language: English unless the user prefers Korean. Create the four CSV files with the header lines above (UTF-8 with BOM: write with `encoding='utf-8-sig'`).
-2. Period: from the earliest work in any source to today. Ask only if the user wants to limit it.
-3. For each reachable source, list (do not open) what exists: count of items per month, earliest date. Show the inventory as a short table: source, earliest month, items, how you will enumerate it.
+2. Period: the first look covers `cutoff` to today. Note the earliest date each source reaches (it sizes Stage 3) but do not enumerate older items yet.
+3. For each reachable source, list (do not open) what exists since `cutoff`: count of items per month, plus the earliest date overall. Show the inventory as a short table: source, earliest month, items in the last 90 days, how you will enumerate it.
 
-### Step 2. First skim and taxonomy (sign-off gate)
+### Step 2. First skim and taxonomy (light sign-off gate)
 
-1. Skim titles only across the whole period: chat titles, repository names and PR titles, document titles, calendar event titles, Slack channels. Cheap listing calls; no opening.
+1. Skim titles only: for the last 90 days, plus a cheap look at older chat titles, repository names and Drive folders so the areas fit the whole history. Listing calls only; no opening.
 2. Propose:
    - **4 to 7 areas**, stable across years: e.g. `1 Research`, `2 Graduate School`, `3 Startup`, `4 Career`, `5 Admin`. Areas are life domains, not projects.
-   - **Packages per year**, each a project, a deliverable stream or a recurring duty, holding roughly 3 to 40 tasks: e.g. `1.2 Workshop paper`, `3.1 App v1 launch`, `4.1 Teaching assistant`. Split anything bigger, merge anything smaller into a neighbour.
+   - **Packages for the current year, only for what the last 90 days show**, each a project, a deliverable stream or a recurring duty, holding roughly 3 to 40 tasks (expect fewer in the first look): e.g. `1.2 Workshop paper`, `3.1 App v1 launch`, `4.1 Teaching assistant`. Split anything bigger, merge anything smaller into a neighbour. Tell the user that older years may add packages later; that is normal and does not change any code already written.
    - **3 to 6 goals** for plan.csv (`goal` rows): outcomes the user cares about, e.g. "Finish the MSc", "PhD admission for 2027". Tasks link to at most one.
-3. Show the proposal as a compact tree with estimated task counts per package, plus the goal list. **Wait for explicit sign-off** and iterate until you have it: codes become permanent once rows are written, so a good early structure matters more than anything after it.
+3. Show the proposal as a compact tree with estimated task counts per package, plus the goal list. **Wait for explicit sign-off**, but keep it light: the areas are what must be right now, because codes are permanent once rows are written; packages can grow. Iterate until the areas are agreed.
 
-### Step 3. Coverage windows and the historical import
+### Step 3. Coverage windows and the import (last 90 days)
 
-1. Write coverage.csv: one row per year × month × source, state `not_started` (`unavailable` for sources you cannot reach, memo = why).
+1. Write coverage.csv: one row per year × month × source for the months from `cutoff` to today, state `not_started` (`unavailable` for sources you cannot reach, memo = why). The month that contains `cutoff` is enumerated only from `cutoff`: its memo says "from <cutoff date>" and it stays `partial` until Stage 3 has covered the rest of that month. Older months are added in Stage 3.
 2. Fill windows **oldest first**, so codes come out roughly chronological. For each window, **enumerate every item by ID** with date-bounded listings, paging to the end. Never sample and never stop at "enough".
 3. Judge every item with a work lens and record a verdict in `sweep_state.json`: `<year> <code>` (already covered), `new:<code>` (row added), `detail:<code>` (adds evidence to an existing row), `skip:<reason>` (no work: chit-chat, personal, trivial Q&A that serves no task). A chat that serves a task (reading a paper for it, comparing tools before a purchase, formatting a document) is `detail:`, not `skip:`.
 4. Date each row from the item that carries the result: the message or commit or file version where the deliverable appears, not the conversation start.
@@ -143,7 +158,7 @@ For every row: a `create` event on its start date (to its first status), a `stat
 
 ### Step 8. Reconcile current status with the user
 
-Imported records lag reality: work finished outside the sources, or never written down, still looks open. This is the most common first-run error, so ask before you schedule anything.
+Imported records lag reality: work finished outside the sources, or never written down, still looks open. This is the most common first-run error, so ask before you show results. In the first look this is a quick pass: only the open tasks the 90 days produced, in batches of up to 10, with likely answers pre-filled; older open tasks are reconciled when their windows are imported.
 
 1. Run `python3 <scripts>/reconcile.py list <folder>`. It lists every open leaf task (in progress, waiting, undated) in batches of up to 10, grouped by package, undated and oldest first, with hints the ledger itself gives (a dependent task has started, a later row looks like the result, long silence).
 2. Before asking, **pre-fill likely answers from evidence**: a later row that mentions the result, a merged PR, a sent e-mail or a submitted file. Mark them "(likely done: <evidence>)" in the option text, so the user mostly confirms.
@@ -159,17 +174,65 @@ Imported records lag reality: work finished outside the sources, or never writte
 4. Publish to the location from Step 0: republish the artifact with the files, or write the folder (commit to the repository only if the user asked). Leave `sweep_state.json` out of anything shared, because it lists item IDs.
 5. Add a `checkup` row to plan.csv with `recheck` = a week from today, and `focus` rows for the 2 or 3 packages the user wants to push now.
 
-### Step 10. Schedule background tracking
 
-So the user never has to ask for things to be added, set up two recurring runs (pick minutes off :00 and :30). The `wbs-schedule` skill has the ready prompts and the steps for each app; create a schedule only when the user explicitly asks:
+### Step 10. Show the result
+
+Early impact is the point: show it right after Step 9, before asking for anything more.
+1. Publish the dashboard and open it for the user.
+2. Show the analysis and the visualizations the dashboard computes from the rows: rows per area and per month, status mix, key results, what is open, late or blocked, and the focus packages.
+3. Say **three short headline findings**, each one sentence with a number taken from the rows (for example where the time went, what is stuck, what finished that the user may have forgotten). Do not invent a finding the rows do not support.
+4. State plainly what this is: the last 90 days only, with the older history still to come.
+
+## Stage 2. Ask how to continue
+
+### Step 11. Offer the options
+
+Ask right after Step 10, with the app's multiple-choice question tool when there is one. Also ask now for the items deferred from Step 0 (ChatGPT export, extra repositories and organisations, local folders).
+
+| Option | What happens | Cost, in relative terms |
+|---|---|---|
+| **a. Full power now** | Collect the last 12 months, then all older history, in this and following sessions, with the maximum resources: you are the lead and plan, merge, number and validate; 2 or 3 worker subagents enumerate windows in parallel. | Fastest to a complete ledger; the most tokens and the most attention in the next hours. |
+| **b. Steady in the background** | 1 or 2 background agents (scheduled runs or sessions) each take a few windows per run, walking backwards month by month, 12 months first and then older years, refining a little each time. | Slowest to finish (days to weeks); small cost per run, and nothing to watch. |
+
+Also ask which **worker model** to use (cost versus thoroughness). Default: Sonnet workers with the session's own model as lead. A stronger worker model is more thorough and costs more; a cheaper one is faster and may leave more `partial` windows for a second pass. Do not quote prices or durations you cannot know; give the relative comparison above.
+
+There is no third option of stopping at 3 months. Whatever the user picks, two things hold: **the collection goes to the end** (the user can pause either mode and resume it later, but no window is silently dropped; every window ends `complete` or `unavailable`), and **new work keeps being collected in the background**. Record the choice as `config` rows in plan.csv (`config,,expansion,<a|b>`, `config,,worker-model,<model>`).
+
+## Stage 3. Expand to the whole history
+
+### Step 12. Walk backwards
+
+**Order.** Last 12 months first (the month containing `cutoff` is finished first), then older years, newest year first and newest month first inside each year. Add the new windows to coverage.csv as `not_started` a year at a time. Within a window the Step 3 rules apply unchanged: enumerate every item by ID, judge, dedupe, atomize, validate.
+
+**Progress is coverage.csv.** The next window is always the first `not_started` or `partial` row in that order; a window closes by the `complete` rules in `wbs-sweep`. Report progress as `complete` windows ÷ windows that are not `unavailable`, per year. A year is finished when no window is open. Stop when none is.
+
+**Codes stay permanent.** Never renumber rows already written. Older windows add rows under the year they belong to. Items that fit an existing package take the next free number there. Work in an older year that fits no package gets a new package in that year's tree, taking that year's next free package number (the areas are fixed). A year with no tree yet starts at `1` in each area. Show new packages to the user in one line each in the next weekly summary; ask only when an item truly fits no area. Do a Step 8 reconciliation for each older year when its windows are mostly done.
+
+**Mode a, full power.** You are the lead. The package is designed around an Opus-class lead: you plan the windows, merge, number and validate.
+1. Pick the next batch of windows (about 6 per worker per round) and give each of 2 or 3 workers its windows.
+2. Each worker is a subagent on the chosen worker model (Claude Code: the Agent tool with `model: sonnet`; the `wbs-collector` agent already does this). Give it the agreed areas and packages, the current code list of the year (for dedupe), its windows, the row format and the rules in "Budget and subagents". It enumerates read-only and returns candidate rows plus a verdict per item.
+3. You check the returned verdicts against the rules (exact dates, evidence, atomic rows), reject or fix weak rows, assign codes, write, run Steps 4 to 9, update coverage and `sweep_state.json`, and republish.
+4. Repeat until no window is open or the user pauses. After each round, give one line: windows done, rows added, coverage so far.
+
+**Mode b, steady in the background.** Create the expansion run from `wbs-schedule` (section 2, "Backfill expansion") for 1 or 2 agents, only when the user chose it and asked for the schedule. Each run takes a few windows, advances them and stays silent. If no scheduler is available, say so and offer to continue in-session in small rounds.
+
+**Switching.** The user may change mode or pause at any time; coverage.csv shows where to resume. When the last window closes, run a full atomization pass and a final Step 8 reconciliation, then tell the user the ledger is complete.
+
+## Stage 4. Keep going
+
+### Step 13. Schedule the background runs
+
+New work is collected from now on, whatever the user chose in Step 11. So the user never has to ask for things to be added, set up the recurring runs (pick minutes off :00 and :30). The `wbs-schedule` skill has the ready prompts and the steps for each app; create a schedule only when the user explicitly asks:
 - **Daily collection**, e.g. 21:17 local: "Use the wbs-sweep skill in catch-up mode: enumerate the last 48 hours of every source, log new work atomically with the wbs-tracker rules, validate, regenerate the agent files, publish. Report only what needs my answer."
 - **Weekly review**, e.g. Monday 08:43: "Use the wbs-tracker skill to run the weekly health check, update plan.csv, publish, and send me the summary."
 
+The cadence of showing is deliberate: the daily run is silent unless something needs the user's answer, and **the weekly review is when the user is shown what was added** (new rows, windows closed, new packages, coverage). Do not report after every run. If the user chose mode b in Step 11, add the backfill expansion run from `wbs-schedule` as a third schedule.
+
 Where to schedule: Claude Code cloud scheduled tasks (`/schedule` in the CLI or claude.ai/code/routines; they run without your machine, from a fresh clone, so the ledger must be in a repository or artifact the run can reach, and only the connectors the task needs should be attached); Claude Desktop scheduled tasks for local folders; otherwise cron or launchd running `claude -p "<prompt>" --allowedTools "<the rules from Step 0>"`; or whatever scheduled-task feature the user's app offers. If nothing can be scheduled, say so and suggest a recurring reminder instead.
 
-### Step 11. Report
+### Step 14. Report
 
-Tell the user, briefly: rows written per year (leaves, key results), coverage per year (`complete` ÷ windows that are not `unavailable`), windows still open and why, rows waiting for dates, what reconciliation changed, the schedules created, and the next step (the sweep resumes on its own).
+At the end of each onboarding session, tell the user, briefly: rows written per year (leaves, key results), coverage per year (`complete` ÷ windows that are not `unavailable`), windows still open and why, rows waiting for dates, what reconciliation changed, the schedules created, and the next step (the expansion mode chosen in Step 11, and that the next update will be shown in the weekly review).
 
 ## Source notes
 
@@ -217,9 +280,20 @@ Date rows by the `create_time` of the message that produced the result, converte
 
 ## Budget and subagents
 
-- One run handles about 6 windows (one source × one month each) or one busy month of chats; checkpoint after every window. The `wbs-sweep` skill resumes where you stopped.
+**Lead and workers.** Planning and writing need judgment; enumerating read-only sources does not. So the work is split by model:
+
+| Role | Model | Does | Never does |
+|---|---|---|---|
+| **Lead** | the session's own model; the package is designed around an Opus 5.5-class model | plans windows, decides the taxonomy and codes, checks worker verdicts, merges, numbers, writes files, validates, publishes, talks to the user | |
+| **Workers** | Sonnet by default; the user may pick a cheaper or stronger model in Step 11 (in Claude Code: the Agent tool with `model: sonnet`, or the `wbs-collector` agent) | enumerate their windows by ID, judge items, return candidate rows and verdicts | edit any file, write the ledger, assign codes, change anything in a connected app |
+
+Workers are safe on a cheaper model because the sources are read-only and only the lead writes: a weak candidate row is rejected or fixed in the merge, and a missed item is caught by the second pass that `complete` requires.
+
+- Run at most 2 or 3 workers in parallel. Give each the agreed areas and packages, the current code list of the year (for deduping), its windows, the row format and these rules; they return candidate rows and verdicts, not edits. One writer (you) merges, numbers and validates.
+- One round handles about 6 windows per worker (one source × one month each) or one busy month of chats; checkpoint after every window. The `wbs-sweep` skill resumes where you stopped.
 - Prefer listings and metadata over opening items: titles and dates judge most items.
-- Parallel subagents (at most 2 or 3 at a time) can enumerate windows. Give each the agreed taxonomy, the current code list of the year (for deduping), its windows, the row format and these rules; have them return candidate rows and verdicts, not edit files. One writer (you) merges, numbers and validates.
+- Stage 1 (the first look) usually needs no workers: 3 months is small enough for the lead alone. Use workers when it is clearly large.
+- Without a subagent tool (for example a chat app), the lead does the windows itself in smaller rounds; mode a then means working through more windows per session.
 
 ## Privacy defaults
 

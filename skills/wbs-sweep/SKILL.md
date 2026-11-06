@@ -1,6 +1,6 @@
 ---
 name: wbs-sweep
-description: Find work missing from the personal WBS ledger with an exhaustive, resumable sweep of every source × month window (Claude chats, ChatGPT export, GitHub, Google Drive, Gmail, Calendar, Slack, Notion, local folders), including the daily catch-up of the last 48 hours, the range-row atomization pass and re-checks of undated rows. Use when asked to find unlogged work or backfill a year, and for scheduled daily collection runs.
+description: Find work missing from the personal WBS ledger with an exhaustive, resumable sweep of every source × month window (Claude chats, ChatGPT export, GitHub, Google Drive, Gmail, Calendar, Slack, Notion, local folders), including the daily catch-up of the last 48 hours, the backfill expansion that walks back through older months after the bootstrap's 3-month first look, the range-row atomization pass and re-checks of undated rows. Use when asked to find unlogged work or backfill a year, and for scheduled daily collection runs.
 license: MIT
 ---
 
@@ -55,14 +55,15 @@ Verdicts: `<year> <code>` (covered by that row), `new:<code>` (added this run), 
 2. **Pick windows** within the budget (default: at most 6 windows per run, at most 2 or 3 subagents at a time):
    1. Catch-up: the last 48 hours across every reachable source (always; this is the whole job of a daily scheduled run).
    2. Open windows of the current year (`partial`, then `not_started`), oldest month first.
-   3. Backfill earlier years, newest month first.
+   3. Backfill: after the bootstrap's first look the ledger holds only the last 90 days, so the windows beyond it are `not_started`. Go backwards: the last 12 months first, then earlier years newest first, newest month first. In **backfill mode** (the scheduled expansion run) this is the whole job: take the next N open windows (default 3), skip the catch-up if the daily run does it, and do not exceed one run's budget.
+   New packages for an older year take that year's next free package number; existing codes never change.
 3. **Enumerate each window completely, by ID**, with date-bounded listings paged to the end (see Sources). Diff the IDs against `sweep_state.json`; an item updated after it was judged counts as new (a continued chat, an edited file). Judge every unreviewed item with a work lens, from its listing whenever possible, and record a verdict for every ID. An item that serves an existing task (research for it, tool comparison before a purchase, formatting) is `detail:`, not `skip:`. Re-judge `skip:` verdicts that look like Q&A before closing a window: Q&A often serves a task.
 4. **Snowball**: for every new item, take 2 to 5 distinctive terms (project, tool, file or organisation names) and search the other sources and the whole year for them; queue the windows of any unreviewed hit and push the terms onto `keywords.queue`. When no window is open, pop up to 20 queued terms per run as a cross-check. Enumeration by ID, not keyword search, is what closes a window.
 5. **Merge** into wbs.csv with the wbs-tracker rules: dedupe against the whole year; the same result seen again only adds evidence; a new result of an existing task becomes a dated level-4 step or a new row; new tasks take the next free code. Date every row from the item that carries the result, and add its evidence pointer. Append events (`create`, `status`); events for work that happened before today are `estimated` = `Y`.
 6. **Atomize and date** (below).
 7. **Update coverage**: per window `passes` + 1, `new_last_pass`, `last_checked` = today, state by the rules above, memo = what was enumerated.
 8. **Validate and publish**: `python3 <scripts>/validate.py <folder>` (0 errors), `python3 <scripts>/make_agent_files.py <folder>`, then publish the changed files to the ledger's location (see wbs-tracker).
-9. **Report**, tersely, in the user's language: windows advanced, new rows (code and one line each), coverage per year (`complete` ÷ windows that are not `unavailable`), what is next. A scheduled daily run reports only what needs the user (questions, conflicts, failures). Stop when the budget is used or no window is open.
+9. **Report**, tersely, in the user's language: windows advanced, new rows (code and one line each), coverage per year (`complete` ÷ windows that are not `unavailable`), what is next. A scheduled daily or backfill run reports only what needs the user (questions, conflicts, failures); what was added is shown in the weekly review, not after each run. Stop when the budget is used or no window is open.
 
 ## Range-row atomization pass
 
