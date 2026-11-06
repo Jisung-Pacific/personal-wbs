@@ -4,7 +4,7 @@
 
 Report security issues privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability** (private vulnerability reporting). If that is unavailable, open an issue that says only that you have a security report, without details, and the maintainer will arrange a private channel. Please do not post exploit details in public issues.
 
-You can expect an acknowledgement within a week. Fixes are released as a new version with a note in the changelog of the README.
+The maintainer acknowledges reports and coordinates a fix privately; fixes ship as a new plugin version, and the commit history records what changed.
 
 ## What the core plugin can do
 
