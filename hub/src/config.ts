@@ -13,6 +13,16 @@
 //   HUB_CHECK_REVOKED     1 (default) → sign-in also checks the account is not disabled or revoked (needs firebaseauth.users.get)
 //   HUB_BRAND             whose accounts these are, as the consent page names them (default "PP WBS")
 //   HUB_EXTRA_SCOPES      JSON {scope: {ko, en}}: scopes of services plugged in behind the same accounts (reserved until their tools ship)
+//   HUB_KMS_KEY           Cloud KMS CryptoKey that wraps every account's data key (projects/…/cryptoKeys/…). Required in production.
+//   HUB_LOCAL_KEK         base64 32-byte key used instead of KMS (tests, the emulator, local runs). Never in production.
+//   HUB_ALLOW_PLAINTEXT   1 → also read ledger documents written before encryption (a one-off migration window)
+//   HUB_HOST_SESSION_URL  the host product's session endpoint; a connection also makes the person a member there (auth/host.ts)
+//   HUB_HOST_NAME         the host product's name on the consent page (default: HUB_BRAND)
+//   HUB_HOST_TERMS_URL, HUB_HOST_PRIVACY_URL   the host's terms and privacy policy, linked next to the consent checkbox
+//   HUB_HOST_APPCHECK_APP_ID   the hub's app id in the host's Firebase project (App Check custom provider), if the host enforces App Check
+//   HUB_HOST_REQUIRED     1 → refuse the connection when joining the host fails (default: connect anyway, retry next time)
+
+import type { HostConfig } from './auth/host.js';
 
 export interface FirebaseWebConfig { apiKey: string; authDomain: string; projectId: string }
 
@@ -29,6 +39,10 @@ export interface Config {
   refreshTtl: number;
   brand: string;
   checkRevoked: boolean;
+  kmsKey?: string;
+  localKek?: string;
+  allowPlain: boolean;
+  host: HostConfig;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -39,6 +53,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (devLogin && store === 'firestore') throw new Error('HUB_DEV_LOGIN is for local runs only; it cannot be combined with the firestore store');
   if (store === 'firestore' && !env.HUB_SIGNING_JWK) throw new Error('HUB_SIGNING_JWK is required with the firestore store');
   if (!/^https:\/\//.test(publicUrl) && store === 'firestore') throw new Error('HUB_PUBLIC_URL must be https in production');
+  if (store === 'firestore' && !env.HUB_KMS_KEY && !(env.HUB_LOCAL_KEK && env.FIRESTORE_EMULATOR_HOST))
+    throw new Error('HUB_KMS_KEY is required with the firestore store (HUB_LOCAL_KEK only against the emulator)');
   return {
     publicUrl,
     port: Number(env.PORT || 8787),
@@ -52,7 +68,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     refreshTtl: Number(env.HUB_REFRESH_TTL || 30 * 24 * 3600),
     brand: env.HUB_BRAND || 'PP WBS',
     checkRevoked: env.HUB_CHECK_REVOKED !== '0',
+    kmsKey: env.HUB_KMS_KEY || undefined,
+    localKek: env.HUB_LOCAL_KEK || undefined,
+    allowPlain: env.HUB_ALLOW_PLAINTEXT === '1',
+    host: {
+      name: env.HUB_HOST_NAME || env.HUB_BRAND || 'PP WBS',
+      sessionUrl: httpsOrLocal(env.HUB_HOST_SESSION_URL, store),
+      termsUrl: httpsOrLocal(env.HUB_HOST_TERMS_URL, store),
+      privacyUrl: httpsOrLocal(env.HUB_HOST_PRIVACY_URL, store),
+      appCheckAppId: env.HUB_HOST_APPCHECK_APP_ID || undefined,
+      required: env.HUB_HOST_REQUIRED === '1',
+    },
   };
+}
+
+/** An https URL (http on localhost is allowed for local runs and tests); empty → undefined. */
+function httpsOrLocal(v: string | undefined, store: string): string | undefined {
+  if (!v) return undefined;
+  const u = new URL(v);
+  if (u.protocol === 'https:' || (store === 'memory' && u.protocol === 'http:' && /^(localhost|127\.0\.0\.1)$/.test(u.hostname))) return u.toString();
+  throw new Error(`${v} must be https`);
 }
 
 // The scopes a client may ask for. Reserved scopes are accepted in requests but grant nothing until their tools exist.

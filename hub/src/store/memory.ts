@@ -68,4 +68,13 @@ export class MemoryStore implements Store {
     const was = { ...r }; r.used = true; return was;
   }
   async revokeFamily(family: string) { for (const [h, r] of this.refresh) if (r.family === family) this.refresh.delete(h); }
+
+  private secrets = new Map<string, unknown>();
+  async putSecret(uid: string, name: string, value: unknown) { this.secrets.set(`${uid}|${name}`, structuredClone(value)); }
+  async secret<T>(uid: string, name: string) { const v = this.secrets.get(`${uid}|${name}`); return v === undefined ? null : structuredClone(v) as T; }
+  async deleteAccount(uid: string) {
+    this.ledgers.delete(uid);
+    for (const k of [...this.secrets.keys()]) if (k.startsWith(uid + '|')) this.secrets.delete(k);
+    for (const [h, r] of this.refresh) if (r.uid === uid) this.refresh.delete(h);
+  }
 }

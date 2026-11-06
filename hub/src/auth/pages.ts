@@ -21,6 +21,9 @@ input { min-height: 44px; border-radius: 10px; border: 1px solid var(--line); ba
 .who { padding: 10px 12px; border-radius: 10px; background: var(--bg); margin: 10px 0; font-size: 14px } .err { color: var(--warn); min-height: 1.4em; font-size: 13.5px }
 details summary { cursor: pointer; color: var(--muted); font-size: 13.5px; min-height: 32px; display: flex; align-items: center }
 .foot { margin-top: 16px; font-size: 12px; color: var(--muted) }
+.join { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0 0 14px; font-size: 13.5px }
+.join p { margin: 0 0 8px } .join label { display: flex; gap: 8px; align-items: flex-start; min-height: 32px; cursor: pointer }
+.join input[type=checkbox] { width: 20px; min-height: 20px; height: 20px; margin: 2px 0 0; flex: none } .join a { color: var(--accent) }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }`;
 
 export function errorPage(title: string, detail: string): string {
@@ -31,14 +34,19 @@ export function errorPage(title: string, detail: string): string {
 export function consentPage({ cfg, pending, nonce }: { cfg: Config; pending: AuthRequest; nonce: string }): string {
   const scopes = pending.scope.split(' ').map(s => `<li>${esc(SCOPES[s]?.ko || s)}${SCOPES[s]?.reserved ? ' <small>(준비 중)</small>' : ''}</li>`).join('');
   const host = (() => { try { const u = new URL(pending.redirect_uri); return /^https?:$/.test(u.protocol) ? u.host : u.protocol; } catch { return pending.redirect_uri; } })();
-  const fb = cfg.firebaseWeb, dev = cfg.devLogin;
+  const fb = cfg.firebaseWeb, dev = cfg.devLogin, join = !!cfg.host.sessionUrl, hn = cfg.host.name;
+  const link = (u: string | undefined, t: string) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${t}</a>` : t;
+  const links = cfg.host.termsUrl || cfg.host.privacyUrl ? `${link(cfg.host.termsUrl, '이용약관')}과 ${link(cfg.host.privacyUrl, '개인정보처리방침')}` : '';
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PP WBS Hub 연결</title><style nonce="${nonce}">${STYLE}</style></head><body><main>
 <h1>${esc(pending.client_name)} 연결</h1>
 <p class="sub">이 앱이 ${esc(cfg.brand)} 계정의 다음 권한을 요청합니다.</p>
 <ul>${scopes}</ul>
 <p class="host">돌아갈 곳: ${esc(host)}</p>
-<form id="f" method="post" action="/oauth/approve"><input type="hidden" name="req" value="${esc(pending.id)}"><input type="hidden" name="id_token" id="tok"><input type="hidden" name="decision" id="dec" value="deny"></form>
+${join ? `<div class="join"><p>허용하면 ${esc(hn)} 계정으로 로그인되고, 처음이면 이 단계에서 ${esc(hn)} 회원으로 가입됩니다.</p>
+<label><input type="checkbox" id="agree"> <span>${esc(hn)} ${links || '이용약관과 개인정보처리방침'}에 동의합니다.</span></label></div>` : ''}
+<form id="f" method="post" action="/oauth/approve"><input type="hidden" name="req" value="${esc(pending.id)}"><input type="hidden" name="id_token" id="tok"><input type="hidden" name="decision" id="dec" value="deny">
+<input type="hidden" name="host_ok" id="hok" value=""><input type="hidden" name="tz" id="tz" value=""><input type="hidden" name="lang" id="lang" value=""></form>
 <div id="who" class="who" hidden></div>
 ${fb ? `<div class="row" id="signin">
   <button class="btn primary" id="g" type="button">Google로 계속</button>
@@ -57,7 +65,14 @@ ${fb ? `<script nonce="${nonce}" src="https://www.gstatic.com/firebasejs/${FIREB
   let token = null;
   const ready = (label, t) => { token = t; $('who').textContent = label + ' 계정으로 허용합니다'; $('who').hidden = false; $('allow').hidden = false; $('allow').focus(); };
   const fail = e => { $('err').textContent = (e && e.message) || String(e); };
-  $('allow').onclick = () => { if (!token) return; $('tok').value = token; $('dec').value = 'allow'; f.submit(); };
+  try { $('tz').value = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+  $('lang').value = navigator.language || '';
+  $('allow').onclick = () => {
+    if (!token) return;
+    ${join ? `if (!$('agree').checked) { $('err').textContent = '${esc(hn)} 이용약관과 개인정보처리방침에 동의해야 연결할 수 있습니다.'; $('agree').focus(); return; }
+    $('hok').value = '1';` : ''}
+    $('tok').value = token; $('dec').value = 'allow'; f.submit();
+  };
   $('deny').onclick = () => { $('dec').value = 'deny'; f.submit(); };
   ${fb ? `firebase.initializeApp(${JSON.stringify({ apiKey: fb.apiKey, authDomain: fb.authDomain, projectId: fb.projectId })});
   const auth = firebase.auth();

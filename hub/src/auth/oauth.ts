@@ -10,8 +10,9 @@ import type { OAuthClient, Store } from '../store/types.js';
 import { random, sha256, pkceOk, type TokenIssuer } from './tokens.js';
 import type { VerifyIdToken } from './identity.js';
 import { consentPage, errorPage } from './pages.js';
+import { cleanLocale, cleanTimezone, type JoinHost } from './host.js';
 
-export interface OAuthDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; fetchImpl?: typeof fetch }
+export interface OAuthDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; fetchImpl?: typeof fetch; joinHost?: JoinHost }
 
 const REQUEST_TTL = 10 * 60e3, CODE_TTL = 5 * 60e3;
 
@@ -170,6 +171,11 @@ export function oauthRouter(deps: OAuthDeps): Router {
     if (b.decision !== 'allow') return back({ error: 'access_denied', error_description: 'the user declined' });
     let uid: string;
     try { uid = (await deps.verifyIdToken(String(b.id_token || ''))).uid; } catch { return back({ error: 'access_denied', error_description: 'sign-in could not be verified' }); }
+    if (cfg.host.sessionUrl && deps.joinHost) {   // the connection also makes the person a member of the host product
+      if (b.host_ok !== '1') return back({ error: 'access_denied', error_description: 'the host terms were not accepted' });
+      const joined = await deps.joinHost(uid, String(b.id_token), { timezone: cleanTimezone(b.tz), locale: cleanLocale(b.lang) });
+      if (joined === 'failed' && cfg.host.required) return back({ error: 'temporarily_unavailable', error_description: 'joining the host product failed; try again' });
+    }
     const code = random(32);
     await store.putCode({ hash: sha256(code), client_id: pending.client_id, client_name: pending.client_name, redirect_uri: pending.redirect_uri, code_challenge: pending.code_challenge,
       scope: pending.scope, resource: pending.resource, uid, expires_at: Date.now() + CODE_TTL });

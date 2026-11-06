@@ -1,0 +1,55 @@
+# Continuous deployment of the PP WBS Hub: every push that touches hub/ on the deploy branch is tested, built and rolled
+# out as a new Cloud Run revision. No keys: Workload Identity Federation (hub/deploy/terraform/ci.tf) lets only this
+# repository, on the configured ref, act as a deployer limited to this one service and its image repository.
+# Inactive until the repository variables from bootstrap.sh are set; project values are masked in the public log.
+name: hub-deploy
+on:
+  push:
+    branches: [v0.2, main]
+    paths: ['hub/**', '.github/workflows/hub-deploy.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: hub-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: ${{ vars.GCP_WIF_PROVIDER != '' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - name: mask project values
+        run: |
+          for v in "${{ vars.GCP_PROJECT }}" "${{ vars.GCP_DEPLOYER_SA }}" "${{ vars.GCP_WIF_PROVIDER }}" "${{ vars.HUB_IMAGE_REPO }}"; do echo "::add-mask::$v"; done
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: hub/package-lock.json
+      - name: test
+        run: npm ci && npm test
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: build and push
+        run: |
+          gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+          docker build -t "${{ vars.HUB_IMAGE_REPO }}:${GITHUB_SHA}" .
+          docker push "${{ vars.HUB_IMAGE_REPO }}:${GITHUB_SHA}"
+      - name: roll out
+        run: |
+          DIGEST=$(gcloud artifacts docker images describe "${{ vars.HUB_IMAGE_REPO }}:${GITHUB_SHA}" --format='value(image_summary.digest)')
+          gcloud run deploy "${{ vars.HUB_SERVICE }}" --image "${{ vars.HUB_IMAGE_REPO }}@${DIGEST}" --region "${{ vars.GCP_REGION }}" --quiet
+      - name: smoke test
+        run: |
+          URL=$(gcloud run services describe "${{ vars.HUB_SERVICE }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
+          echo "::add-mask::$URL"
+          curl -fsS "$URL/healthz" >/dev/null
+          curl -fsS "$URL/.well-known/oauth-authorization-server" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["code_challenge_methods_supported"]==["S256"]'

@@ -5,6 +5,7 @@ import type { Config } from './config.js';
 import type { Store } from './store/types.js';
 import type { TokenIssuer } from './auth/tokens.js';
 import type { VerifyIdToken } from './auth/identity.js';
+import type { JoinHost } from './auth/host.js';
 import { oauthRouter, resourceMetadata, serverMetadata } from './auth/oauth.js';
 import { buildMcp } from './mcp.js';
 import { openapi, restRouter, type Authed } from './rest.js';
@@ -12,7 +13,7 @@ import { Ledger } from './wbs/service.js';
 
 export const VERSION = '0.1.0';
 
-export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verifyIdToken: VerifyIdToken) {
+export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verifyIdToken: VerifyIdToken, joinHost?: JoinHost) {
   const app = express(), ledger = new Ledger(store), u = cfg.publicUrl;
   app.disable('x-powered-by');
   app.set('trust proxy', 1);   // Cloud Run's front end sets X-Forwarded-For; the rate limiter keys on the caller
@@ -25,7 +26,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   app.get('/.well-known/oauth-protected-resource/v1', prm(`${u}/v1`));
   app.get(['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'], (_req, res) => { res.json(serverMetadata(cfg)); });
   app.get('/.well-known/jwks.json', (_req, res) => { res.set('Cache-Control', 'public, max-age=300').json(issuer.jwks()); });
-  app.use('/oauth', oauthRouter({ cfg, store, issuer, verifyIdToken }));
+  app.use('/oauth', oauthRouter({ cfg, store, issuer, verifyIdToken, joinHost }));
 
   /** Bearer check for one resource: a valid hub token minted for it (or for the hub as a whole). */
   const bearer = (path: 'mcp' | 'v1') => async (req: Authed, res: Response, next: NextFunction) => {

@@ -51,3 +51,39 @@ variable "max_instances" {
   type    = number
   default = 3
 }
+variable "host_name" {
+  type        = string
+  default     = ""
+  description = "The host product whose members the hub's accounts are (consent page); empty → the brand."
+}
+variable "host_session_url" {
+  type        = string
+  default     = ""
+  description = "The host's session endpoint (POST {identityToken, timezone, locale}); creates the member on first sign-in. Empty → no membership step."
+}
+variable "host_terms_url" {
+  type    = string
+  default = ""
+}
+variable "host_privacy_url" {
+  type    = string
+  default = ""
+}
+variable "host_appcheck_app_id" {
+  type        = string
+  default     = ""
+  description = "The hub's Firebase app id in the host project, when the host enforces App Check (custom provider)."
+}
+variable "host_required" {
+  type    = bool
+  default = false
+}
+variable "github_repository" {
+  type        = string
+  default     = ""
+  description = "owner/repo whose workflow may deploy new images (ci.tf). Empty → no CI deployer."
+}
+variable "github_ref" {
+  type    = string
+  default = "refs/heads/main"
+}

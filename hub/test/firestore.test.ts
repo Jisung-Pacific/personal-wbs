@@ -4,12 +4,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { FirestoreStore } from '../src/store/firestore.js';
+import { LocalKek } from '../src/crypto/envelope.js';
+import { randomBytes } from 'node:crypto';
 import { Ledger } from '../src/wbs/service.js';
 
 const on = !!process.env.FIRESTORE_EMULATOR_HOST;
 
 test('Firestore store: concurrent adds get distinct codes; history keeps its order; codes are single use', { skip: !on }, async () => {
-  const store = new FirestoreStore('demo-ppwbs', 'ppwbs'), ledger = new Ledger(store), uid = 'u_' + Date.now();
+  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), ledger = new Ledger(store), uid = 'u_' + Date.now();
   const actor = { uid, clientName: 'Claude' };
   await ledger.add(actor, { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: '첫 작업 기록 테스트', start: '2026-11-06', status: '완료' });
   const words = ['알파 베타 감마', '델타 엡실론 제타', '에타 세타 이오타', '카파 람다 뮤', '뉴 크시 오미크론'];

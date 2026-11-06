@@ -38,12 +38,27 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   host and the scopes; the ID token is verified, including revocation (`HUB_CHECK_REVOKED`).
 - **Data**: a separate Firestore database with deny-all Security Rules; the hub's service account holds
   `roles/datastore.user` on that database alone (IAM condition). Every call is scoped to the token's account.
+- **Encryption layer**: every account has its own random 256-bit data key, stored only wrapped by a Cloud KMS key
+  (bound to the account). Rows, history lines and stored credentials are sealed with AES-256-GCM under that key, each
+  bound to its account and path, so the database, its exports and backups hold ciphertext; only the year and code of a
+  row stay readable for queries. The runtime may use that one KMS key and nothing else; deleting an account deletes its
+  wrapped key first, which makes every copy unreadable (crypto-shredding). Code: `src/crypto/envelope.ts`.
 - **Tokens**: ES256 JWT access tokens (1 h) bound to one resource (`/mcp`, `/v1` or the hub); refresh tokens (30 days)
   rotate and a reused one revokes the grant; codes (5 min) and parked requests (10 min) work once. Only SHA-256 hashes
   of secrets are stored, and a TTL policy removes expired OAuth state.
 - **Client metadata documents** are fetched with guards: https, public addresses only, no redirects, 64 KB, 5 s.
 - **Consent page**: strict CSP (Firebase Auth only), `frame-ancestors 'none'`, form posts only to the hub and the
   client's registered redirect.
+
+## Membership in the host product
+
+When the hub runs inside a product's Firebase project, a connection can also make the person a member of that product:
+the consent page names the product, links its terms and privacy policy and asks for agreement, and on "allow" the hub
+hands the verified ID token to the product's own session endpoint (`HUB_HOST_SESSION_URL`, called as
+`POST {identityToken, timezone, locale}`), which creates the member on the first sign-in exactly as the product's apps
+do. The product's session is kept sealed for the account, for product tools the hub will expose later. If the product
+enforces App Check, register the hub as an app there and set `HUB_HOST_APPCHECK_APP_ID`; the hub mints its own App Check
+tokens. `HUB_HOST_REQUIRED=1` refuses a connection when joining fails; by default it connects and retries next time.
 
 ## Run and test locally
 
@@ -54,18 +69,19 @@ HUB_DEV_LOGIN=1 npm start              # http://localhost:8787 — dev sign-in t
 firebase emulators:exec --only firestore "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node --test dist/test/firestore.test.js"
 ```
 
-## Deploy (Cloud Run, Terraform)
+## Deploy (Cloud Run, Terraform, continuous)
 
-1. Pick the project and region (a Firestore location cannot change later). Start with a dev project.
-2. Build and push the image; use its digest: `gcloud builds submit --tag REGION-docker.pkg.dev/PROJECT/REPO/ppwbs-hub`.
-3. Create the signing key: `terraform apply -target=google_secret_manager_secret.signing_jwk`, then
-   `node dist/scripts/new-key.js | gcloud secrets versions add ppwbs-hub-signing-jwk --data-file=-`.
-4. Fill `deploy/terraform` variables (project, region, image digest, public URL, the project's public Firebase web
-   config, key version) in an untracked `.tfvars`; `terraform plan`, review, `terraform apply`.
-5. Firebase Auth: add the hub's domain to Authorized domains, and enable the Google provider if it is off.
-6. Map a custom domain if wanted, and set `public_url` to it (it is the OAuth issuer; changing it invalidates tokens).
-7. Import an existing ledger: `HUB_STORE=firestore GOOGLE_CLOUD_PROJECT=… node dist/scripts/import.js <uid> wbs.csv events.csv`.
-8. Connect Claude first, then the other agents.
+1. Pick the project, region (a Firestore location cannot change later) and the public URL (it is the OAuth issuer;
+   changing it later signs every connected agent out).
+2. In Cloud Shell, from a clone of this repository, run `hub/deploy/bootstrap.sh` with the variables listed at its top.
+   It enables the APIs, writes an untracked `hub.auto.tfvars`, creates the image registry, the KMS key and the signing-key
+   secret, builds the first image, adds a signing key, and applies the rest (database, rules, TTL, service account, the
+   service, and the keyless CI deployer when `GITHUB_REPOSITORY` is set). Every Terraform plan is shown before it applies.
+3. Set the printed `ci_variables` as GitHub repository variables. From then on every push to the deploy ref that touches
+   `hub/` is tested, built and rolled out (`.github/workflows/hub-deploy.yml`); there is no staging step.
+4. Firebase Auth: add the hub's domain to Authorized domains; map the domain to the service if it is your own.
+5. Import an existing ledger: `GOOGLE_CLOUD_PROJECT=… HUB_KMS_KEY=… node dist/scripts/import.js <uid> wbs.csv events.csv`.
+6. Connect Claude first, then the other agents.
 
 ## Services behind the same accounts
 

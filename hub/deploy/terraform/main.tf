@@ -6,7 +6,10 @@
 #   - deny-all Security Rules on that database: only the hub's server identity reaches it
 #   - a dedicated service account: datastore.user on that one database (IAM condition), its signing-key secret,
 #     and optionally firebaseauth.viewer so sign-in can check revoked or disabled accounts
-#   - the Cloud Run service (public: MCP clients and OAuth redirects must reach it), min 0 instances
+#   - a Cloud KMS key that wraps every account's data key (envelope encryption, src/crypto/envelope.ts); the runtime may
+#     encrypt and decrypt with that one key and nothing else, and the key cannot be destroyed by a plan
+#   - the Cloud Run service (public: MCP clients and OAuth redirects must reach it), min 0 instances; CI (ci.tf) rolls new
+#     images, so Terraform ignores the image after the first apply
 
 terraform {
   required_providers {
@@ -80,6 +83,34 @@ resource "google_project_iam_member" "auth_viewer" {
   member  = local.sa
 }
 
+# ---- envelope encryption: one KMS key wraps the per-account data keys; 90-day rotation, old versions keep decrypting
+resource "google_kms_key_ring" "hub" {
+  name     = var.service_name
+  location = var.region
+}
+resource "google_kms_crypto_key" "account_keys" {
+  name            = "account-data-keys"
+  key_ring        = google_kms_key_ring.hub.id
+  purpose         = "ENCRYPT_DECRYPT"
+  rotation_period = "7776000s"
+  lifecycle {
+    prevent_destroy = true   # destroying it would make every account's ledger unreadable
+  }
+}
+resource "google_kms_crypto_key_iam_member" "hub_wraps" {
+  crypto_key_id = google_kms_crypto_key.account_keys.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = local.sa
+}
+
+# ---- host product membership with App Check: the hub signs its own App Check custom tokens (signBlob on itself)
+resource "google_service_account_iam_member" "hub_signs_appcheck" {
+  count              = var.host_appcheck_app_id != "" ? 1 : 0
+  service_account_id = google_service_account.hub.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = local.sa
+}
+
 resource "google_secret_manager_secret" "signing_jwk" {
   secret_id = "${var.service_name}-signing-jwk"
   replication {
@@ -143,6 +174,24 @@ resource "google_cloud_run_v2_service" "hub" {
         value = jsonencode(var.extra_scopes)
       }
       env {
+        name  = "HUB_KMS_KEY"
+        value = google_kms_crypto_key.account_keys.id
+      }
+      dynamic "env" {
+        for_each = { for k, v in {
+          HUB_HOST_NAME            = var.host_name
+          HUB_HOST_SESSION_URL     = var.host_session_url
+          HUB_HOST_TERMS_URL       = var.host_terms_url
+          HUB_HOST_PRIVACY_URL     = var.host_privacy_url
+          HUB_HOST_APPCHECK_APP_ID = var.host_appcheck_app_id
+          HUB_HOST_REQUIRED        = var.host_required ? "1" : ""
+        } : k => v if v != "" }
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      env {
         name = "HUB_SIGNING_JWK"
         value_source {
           secret_key_ref {
@@ -153,7 +202,10 @@ resource "google_cloud_run_v2_service" "hub" {
       }
     }
   }
-  depends_on = [google_secret_manager_secret_iam_member.signing_jwk, google_project_iam_member.datastore_hub_db_only]
+  depends_on = [google_secret_manager_secret_iam_member.signing_jwk, google_project_iam_member.datastore_hub_db_only, google_kms_crypto_key_iam_member.hub_wraps]
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]   # CI deploys new images (ci.tf)
+  }
 }
 
 # MCP clients (Claude, ChatGPT, Gemini…) and OAuth redirects come from the internet; every route checks its own token
@@ -166,3 +218,4 @@ resource "google_cloud_run_v2_service_iam_member" "public" {
 
 output "service_url" { value = google_cloud_run_v2_service.hub.uri }
 output "service_account" { value = google_service_account.hub.email }
+output "kms_key" { value = google_kms_crypto_key.account_keys.id }

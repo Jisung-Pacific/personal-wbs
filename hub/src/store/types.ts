@@ -64,4 +64,10 @@ export interface Store {
   /** Marks the token used and returns it as it was; null when unknown. A second use returns it with used = true. */
   useRefresh(hash: string): Promise<RefreshRecord | null>;
   revokeFamily(family: string): Promise<void>;
+  // account
+  /** A credential kept for the account (sealed at rest in the Firestore store), e.g. the host product's session. */
+  putSecret(uid: string, name: string, value: unknown): Promise<void>;
+  secret<T>(uid: string, name: string): Promise<T | null>;
+  /** Removes the account's ledger and secrets; the Firestore store shreds the account's data key first. */
+  deleteAccount(uid: string): Promise<void>;
 }
