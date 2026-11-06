@@ -1,10 +1,24 @@
-// Sign-in and consent page. One account (the product's Firebase Auth: Google or email), one decision (allow or deny),
-// and the exact access asked for. The parked request id is the only thing the form carries besides the ID token.
+// Sign-in and consent page. One account (the product's Firebase Auth, with the providers it has switched on), one decision
+// (allow or deny), and the exact access asked for. The parked request id is the only thing the form carries besides the ID token.
 import { SCOPES, type Config } from '../config.js';
 import type { AuthRequest } from '../store/types.js';
 
 const FIREBASE_SDK = '12.19.0';   // compat builds from gstatic, pinned
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+/** JSON inside an inline script: no way out of the script element. */
+const js = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
+// Firebase Auth error codes people meet on this page, in plain words (anything else shows the SDK's own message)
+const AUTH_ERRORS: Record<string, string> = {
+  'auth/popup-closed-by-user': '', 'auth/cancelled-popup-request': '',
+  'auth/popup-blocked': '팝업이 막혔습니다. 이 사이트의 팝업을 허용하고 다시 누르세요.',
+  'auth/unauthorized-domain': '이 주소가 로그인 허용 도메인에 없습니다. 운영자가 Firebase Authentication의 승인된 도메인에 추가해야 합니다.',
+  'auth/operation-not-allowed': '이 로그인 방법은 아직 켜져 있지 않습니다. 다른 방법으로 로그인하세요.',
+  'auth/account-exists-with-different-credential': '같은 이메일이 다른 로그인 방법으로 가입되어 있습니다. 처음 가입한 방법으로 로그인하세요.',
+  'auth/invalid-credential': '이메일 또는 비밀번호가 맞지 않습니다.', 'auth/wrong-password': '이메일 또는 비밀번호가 맞지 않습니다.',
+  'auth/user-not-found': '이메일 또는 비밀번호가 맞지 않습니다.', 'auth/user-disabled': '이 계정은 사용이 중지되었습니다.',
+  'auth/too-many-requests': '시도가 너무 많습니다. 잠시 뒤 다시 하세요.', 'auth/network-request-failed': '네트워크 연결을 확인하고 다시 하세요.',
+  'auth/firebase-app-check-token-is-invalid': '앱 확인(App Check) 때문에 로그인이 막혔습니다. 운영자에게 알려 주세요.',
+};
 
 const STYLE = `
 :root { --bg: #f6f7f9; --card: #fff; --fg: #1d2330; --muted: #5b6475; --line: #dfe3ea; --accent: #2f5bd3; --on-accent: #fff; --warn: #a33a1f; color-scheme: light }
@@ -35,6 +49,7 @@ export function consentPage({ cfg, pending, nonce }: { cfg: Config; pending: Aut
   const scopes = pending.scope.split(' ').map(s => `<li>${esc(SCOPES[s]?.ko || s)}${SCOPES[s]?.reserved ? ' <small>(준비 중)</small>' : ''}</li>`).join('');
   const host = (() => { try { const u = new URL(pending.redirect_uri); return /^https?:$/.test(u.protocol) ? u.host : u.protocol; } catch { return pending.redirect_uri; } })();
   const fb = cfg.firebaseWeb, dev = cfg.devLogin, join = !!cfg.host.sessionUrl, hn = cfg.host.name;
+  const social = cfg.authProviders.filter(p => p.id !== 'password'), pw = cfg.authProviders.some(p => p.id === 'password');
   const link = (u: string | undefined, t: string) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${t}</a>` : t;
   const links = cfg.host.termsUrl || cfg.host.privacyUrl ? `${link(cfg.host.termsUrl, '이용약관')}과 ${link(cfg.host.privacyUrl, '개인정보처리방침')}` : '';
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -49,8 +64,8 @@ ${join ? `<div class="join"><p>허용하면 ${esc(hn)} 계정으로 로그인되
 <input type="hidden" name="host_ok" id="hok" value=""><input type="hidden" name="tz" id="tz" value=""><input type="hidden" name="lang" id="lang" value=""></form>
 <div id="who" class="who" hidden></div>
 ${fb ? `<div class="row" id="signin">
-  <button class="btn primary" id="g" type="button">Google로 계속</button>
-  <details><summary>이메일로 로그인</summary><form id="ef" class="row"><input id="em" type="email" autocomplete="email" placeholder="이메일" required><input id="pw" type="password" autocomplete="current-password" placeholder="비밀번호" required><button class="btn" type="submit">로그인</button></form></details>
+  ${social.map((p, i) => `<button class="btn${i ? '' : ' primary'}" type="button" data-p="${esc(p.id)}">${esc(p.label)} 계정으로 계속</button>`).join('\n  ')}
+  ${pw ? `<details${social.length ? '' : ' open'}><summary>이메일로 로그인</summary><form id="ef" class="row"><input id="em" type="email" autocomplete="email" placeholder="이메일" required><input id="pw" type="password" autocomplete="current-password" placeholder="비밀번호" required><button class="btn" type="submit">로그인</button></form></details>` : ''}
 </div>` : ''}
 ${dev ? `<form id="df" class="row"><input id="duid" placeholder="개발용 uid" pattern="[A-Za-z0-9_\-]{3,64}" required><button class="btn" type="submit">개발용 로그인</button></form>` : ''}
 <div class="row"><button class="btn primary" id="allow" type="button" hidden>허용</button><button class="btn" id="deny" type="button">거부</button></div>
@@ -64,7 +79,8 @@ ${fb ? `<script nonce="${nonce}" src="https://www.gstatic.com/firebasejs/${FIREB
   const $ = id => document.getElementById(id), f = $('f');
   let token = null;
   const ready = (label, t) => { token = t; $('who').textContent = label + ' 계정으로 허용합니다'; $('who').hidden = false; $('allow').hidden = false; $('allow').focus(); };
-  const fail = e => { $('err').textContent = (e && e.message) || String(e); };
+  const AUTH_ERRORS = ${js(AUTH_ERRORS)};
+  const fail = e => { const m = e && e.code in AUTH_ERRORS ? AUTH_ERRORS[e.code] : (e && e.message) || String(e); $('err').textContent = m; };
   try { $('tz').value = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
   $('lang').value = navigator.language || '';
   $('allow').onclick = () => {
@@ -74,12 +90,14 @@ ${fb ? `<script nonce="${nonce}" src="https://www.gstatic.com/firebasejs/${FIREB
     $('tok').value = token; $('dec').value = 'allow'; f.submit();
   };
   $('deny').onclick = () => { $('dec').value = 'deny'; f.submit(); };
-  ${fb ? `firebase.initializeApp(${JSON.stringify({ apiKey: fb.apiKey, authDomain: fb.authDomain, projectId: fb.projectId })});
+  ${fb ? `firebase.initializeApp(${js({ apiKey: fb.apiKey, authDomain: fb.authDomain, projectId: fb.projectId })});
   const auth = firebase.auth();
+  auth.languageCode = 'ko';
   const signed = async u => ready(u.email || u.displayName || '로그인한', await u.getIdToken(true));
   auth.onAuthStateChanged(u => { if (u) signed(u).catch(fail); });
-  $('g').onclick = () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).then(r => signed(r.user)).catch(fail);
-  $('ef').onsubmit = e => { e.preventDefault(); auth.signInWithEmailAndPassword($('em').value, $('pw').value).then(r => signed(r.user)).catch(fail); };` : ''}
+  const provider = id => id === 'google' ? new firebase.auth.GoogleAuthProvider() : new firebase.auth.OAuthProvider(id === 'apple' ? 'apple.com' : id);
+  document.querySelectorAll('[data-p]').forEach(b => { b.onclick = () => { $('err').textContent = ''; auth.signInWithPopup(provider(b.dataset.p)).then(r => signed(r.user)).catch(fail); }; });
+  if ($('ef')) $('ef').onsubmit = e => { e.preventDefault(); auth.signInWithEmailAndPassword($('em').value, $('pw').value).then(r => signed(r.user)).catch(fail); };` : ''}
   ${dev ? `$('df').onsubmit = e => { e.preventDefault(); ready('개발용 ' + $('duid').value, 'dev:' + $('duid').value); };` : ''}
 })();
 </script></body></html>`;

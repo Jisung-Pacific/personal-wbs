@@ -123,6 +123,19 @@ resource "google_secret_manager_secret_iam_member" "signing_jwk" {
   member    = local.sa
 }
 
+# shared with a reverse proxy on your own domain (deploy/cloudflare); empty until bootstrap runs with PROXY=1
+resource "google_secret_manager_secret" "proxy" {
+  secret_id = "${var.service_name}-proxy-secret"
+  replication {
+    auto {}
+  }
+}
+resource "google_secret_manager_secret_iam_member" "proxy" {
+  secret_id = google_secret_manager_secret.proxy.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.sa
+}
+
 resource "google_cloud_run_v2_service" "hub" {
   name                = var.service_name
   location            = var.region
@@ -185,12 +198,28 @@ resource "google_cloud_run_v2_service" "hub" {
           HUB_HOST_PRIVACY_URL     = var.host_privacy_url
           HUB_HOST_APPCHECK_APP_ID = var.host_appcheck_app_id
           HUB_HOST_REQUIRED        = var.host_required ? "1" : ""
+          HUB_HOST_AUTH            = var.host_auth
+          HUB_HOST_AUDIENCE        = var.host_audience
+          HUB_HOST_CHANNEL         = var.host_channel
+          HUB_AUTH_PROVIDERS       = var.auth_providers
           HUB_SUPPORT_EMAIL        = var.support_email
           HUB_OPENAI_APPS_CHALLENGE = var.openai_apps_challenge
         } : k => v if v != "" }
         content {
           name  = env.key
           value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = var.proxy_secret_version != "" ? [var.proxy_secret_version] : []
+        content {
+          name = "HUB_PROXY_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.proxy.secret_id
+              version = env.value
+            }
+          }
         }
       }
       env {
@@ -204,7 +233,7 @@ resource "google_cloud_run_v2_service" "hub" {
       }
     }
   }
-  depends_on = [google_secret_manager_secret_iam_member.signing_jwk, google_project_iam_member.datastore_hub_db_only, google_kms_crypto_key_iam_member.hub_wraps]
+  depends_on = [google_secret_manager_secret_iam_member.signing_jwk, google_secret_manager_secret_iam_member.proxy, google_project_iam_member.datastore_hub_db_only, google_kms_crypto_key_iam_member.hub_wraps]
   lifecycle {
     ignore_changes = [template[0].containers[0].image, client, client_version]   # CI deploys new images (ci.tf)
   }

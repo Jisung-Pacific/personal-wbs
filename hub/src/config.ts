@@ -21,12 +21,22 @@
 //   HUB_HOST_TERMS_URL, HUB_HOST_PRIVACY_URL   the host's terms and privacy policy, linked next to the consent checkbox
 //   HUB_HOST_APPCHECK_APP_ID   the hub's app id in the host's Firebase project (App Check custom provider), if the host enforces App Check
 //   HUB_HOST_REQUIRED     1 → refuse the connection when joining the host fails (default: connect anyway, retry next time)
+//   HUB_HOST_AUTH         none (default) | google-oidc → the join call carries a Google ID token for HUB_HOST_AUDIENCE in
+//                         X-Serverless-Authorization: a host API on a private Cloud Run service that lets the hub invoke it
+//   HUB_HOST_AUDIENCE     audience of that ID token (default: the origin of HUB_HOST_SESSION_URL)
+//   HUB_HOST_CHANNEL      sent as `channel` with the join call, so the host can count where its members came from
+//   HUB_AUTH_PROVIDERS    sign-in choices, in order: google, apple, password, oidc.<id>[=Label] (default "google,password");
+//                         use the providers the Firebase project already has switched on
+//   HUB_PROXY_SECRET      shared with a reverse proxy of your own in front of the service (a Worker on your domain): its
+//                         requests that carry it in X-Hub-Proxy are rate-limited by X-Hub-Client-Ip instead of the proxy's address
 //   HUB_SUPPORT_EMAIL     contact shown on the public pages (directories ask for one)
 //   HUB_OPENAI_APPS_CHALLENGE  the domain-verification token from OpenAI's submission portal, served at /.well-known/openai-apps-challenge
 
 import type { HostConfig } from './auth/host.js';
 
 export interface FirebaseWebConfig { apiKey: string; authDomain: string; projectId: string }
+/** One sign-in choice on the consent page: a Firebase Auth provider id and the name shown on its button. */
+export interface AuthProvider { id: 'google' | 'apple' | 'password' | `oidc.${string}`; label: string }
 
 export interface Config {
   publicUrl: string;
@@ -47,6 +57,8 @@ export interface Config {
   host: HostConfig;
   supportEmail?: string;
   openaiChallenge?: string;
+  authProviders: AuthProvider[];
+  proxySecret?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -82,10 +94,46 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       privacyUrl: httpsOrLocal(env.HUB_HOST_PRIVACY_URL, store),
       appCheckAppId: env.HUB_HOST_APPCHECK_APP_ID || undefined,
       required: env.HUB_HOST_REQUIRED === '1',
+      auth: hostAuth(env.HUB_HOST_AUTH),
+      audience: env.HUB_HOST_AUDIENCE || (env.HUB_HOST_SESSION_URL ? new URL(env.HUB_HOST_SESSION_URL).origin : undefined),
+      channel: channel(env.HUB_HOST_CHANNEL),
     },
     supportEmail: env.HUB_SUPPORT_EMAIL || undefined,
     openaiChallenge: env.HUB_OPENAI_APPS_CHALLENGE || undefined,
+    authProviders: parseProviders(env.HUB_AUTH_PROVIDERS),
+    proxySecret: proxySecret(env.HUB_PROXY_SECRET),
   };
+}
+
+function hostAuth(v: string | undefined): 'none' | 'google-oidc' {
+  if (!v || v === 'none') return 'none';
+  if (v === 'google-oidc') return v;
+  throw new Error(`HUB_HOST_AUTH must be none or google-oidc, not ${v}`);
+}
+function channel(v: string | undefined): string | undefined {
+  if (!v) return undefined;
+  if (!/^[a-z][a-z0-9_-]{1,31}$/.test(v)) throw new Error('HUB_HOST_CHANNEL: 2–32 characters, a–z, 0–9, _ or -');
+  return v;
+}
+function proxySecret(v: string | undefined): string | undefined {
+  if (!v) return undefined;
+  if (v.length < 32) throw new Error('HUB_PROXY_SECRET must be at least 32 characters');
+  return v;
+}
+
+/** HUB_AUTH_PROVIDERS → the consent page's sign-in choices, in the order given. */
+export function parseProviders(v: string | undefined): AuthProvider[] {
+  const out: AuthProvider[] = [];
+  for (const raw of (v || 'google,password').split(',').map(x => x.trim()).filter(Boolean)) {
+    const at = raw.indexOf('='), id = at < 0 ? raw : raw.slice(0, at), label = at < 0 ? '' : raw.slice(at + 1).trim().slice(0, 24);
+    if (id === 'google') out.push({ id, label: label || 'Google' });
+    else if (id === 'apple') out.push({ id, label: label || 'Apple' });
+    else if (id === 'password') out.push({ id, label: label || '이메일' });
+    else if (/^oidc\.[a-z0-9-]{1,30}$/.test(id)) out.push({ id: id as `oidc.${string}`, label: label || id.slice(5) });
+    else throw new Error(`HUB_AUTH_PROVIDERS: unknown provider ${id}`);
+  }
+  if (!out.length) throw new Error('HUB_AUTH_PROVIDERS names no provider');
+  return out;
 }
 
 /** An https URL (http on localhost is allowed for local runs and tests); empty → undefined. */

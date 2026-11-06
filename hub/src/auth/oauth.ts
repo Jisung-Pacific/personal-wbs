@@ -103,7 +103,7 @@ async function resolveClient(id: string, deps: OAuthDeps): Promise<OAuthClient |
 const hits = new Map<string, { n: number; reset: number }>();
 /** Fixed-window limiter per client address; enough to blunt registration and token spraying. */
 function limited(req: Request, bucket: string, max: number): boolean {
-  const k = `${bucket}|${req.ip}`, now = Date.now(), h = hits.get(k);
+  const k = `${bucket}|${(req as Request & { client?: string }).client ?? req.ip}`, now = Date.now(), h = hits.get(k);
   if (!h || h.reset < now) { hits.set(k, { n: 1, reset: now + 60e3 }); return false; }
   return ++h.n > max;
 }

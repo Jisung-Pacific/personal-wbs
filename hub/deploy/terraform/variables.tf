@@ -78,6 +78,31 @@ variable "host_required" {
   type    = bool
   default = false
 }
+variable "host_auth" {
+  type        = string
+  default     = ""
+  description = "google-oidc → the join call carries a Google ID token (the host API is a private Cloud Run service that lets this hub's service account invoke it)."
+}
+variable "host_audience" {
+  type        = string
+  default     = ""
+  description = "Audience of that ID token; empty → the origin of host_session_url."
+}
+variable "host_channel" {
+  type        = string
+  default     = ""
+  description = "Sent as `channel` with the join call, so the host can count members who came through the hub."
+}
+variable "auth_providers" {
+  type        = string
+  default     = ""
+  description = "Sign-in choices on the consent page, in order: google, apple, password, oidc.<id>[=Label]. Empty → google,password."
+}
+variable "proxy_secret_version" {
+  type        = string
+  default     = ""
+  description = "Secret Manager version of the secret shared with a reverse proxy on your own domain (rate limiting by the real caller). Empty → none."
+}
 variable "support_email" {
   type    = string
   default = ""

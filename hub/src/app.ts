@@ -12,6 +12,7 @@ import { openapi, restRouter, type Authed } from './rest.js';
 import { Ledger } from './wbs/service.js';
 import { Inbox } from './wbs/inbox.js';
 import { landingPage, pickLang, privacyPage } from './site.js';
+import { clientAddress } from './net.js';
 
 export const VERSION = '0.1.0';
 
@@ -19,6 +20,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   const app = express(), ledger = new Ledger(store), inbox = new Inbox(store), u = cfg.publicUrl;
   app.disable('x-powered-by');
   app.set('trust proxy', 1);   // Cloud Run's front end sets X-Forwarded-For; the rate limiter keys on the caller
+  app.use((req, _res, next) => { (req as typeof req & { client?: string }).client = clientAddress(req, cfg.proxySecret); next(); });
   app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff').set('Referrer-Policy', 'no-referrer'); next(); });
 
   // discovery: protected-resource metadata per resource path (RFC 9728) and the authorization server (RFC 8414)

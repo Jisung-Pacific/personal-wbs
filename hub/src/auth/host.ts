@@ -7,9 +7,12 @@
 // refresh token is kept for the account, sealed with the account's data key, for host tools the hub will offer later.
 //
 // Configured by HUB_HOST_* (see config.ts). Without a session URL the hub runs on its own and this step is skipped.
-// The endpoint is called as POST {identityToken, timezone, locale}; when HUB_HOST_APPCHECK_APP_ID is set, the call carries
-// an App Check token the hub mints for its own registered app (a custom App Check provider), so a host that enforces
-// App Check accepts it without the browser being involved.
+// The endpoint is called as POST {identityToken, timezone, locale} (+ `channel` when HUB_HOST_CHANNEL is set, so the host
+// can count members who came through the hub). Two ways to satisfy a host that does not take calls from just anyone:
+//   - HUB_HOST_AUTH=google-oidc: the host API is a private Cloud Run service that grants the hub's service account
+//     roles/run.invoker; the call carries a Google ID token in X-Serverless-Authorization (Authorization stays free)
+//   - HUB_HOST_APPCHECK_APP_ID: the call carries an App Check token the hub mints for its own registered app
+//     (a custom App Check provider), so a host that enforces App Check accepts it without the browser being involved
 import type { Store } from '../store/types.js';
 
 export interface HostConfig {
@@ -19,6 +22,9 @@ export interface HostConfig {
   privacyUrl?: string;
   appCheckAppId?: string;  // the hub's app id in the host's Firebase project, for App Check tokens
   required: boolean;       // true → a failed join refuses the connection; false → connect anyway and retry next time
+  auth?: 'none' | 'google-oidc';
+  audience?: string;       // audience of the Google ID token (google-oidc)
+  channel?: string;        // where the member came from, for the host's own counts
 }
 
 export interface JoinContext { timezone: string; locale: 'ko' | 'en' }
@@ -33,15 +39,17 @@ export function cleanTimezone(tz: string | undefined): string {
 }
 export const cleanLocale = (l: string | undefined): 'ko' | 'en' => /^ko\b/i.test(String(l || '')) ? 'ko' : 'en';
 
-export function hostJoiner(host: HostConfig, store: Store, appCheckToken?: () => Promise<string>, fetchImpl: typeof fetch = fetch): JoinHost {
+export function hostJoiner(host: HostConfig, store: Store, appCheckToken?: () => Promise<string>, fetchImpl: typeof fetch = fetch,
+  serviceToken?: () => Promise<string>): JoinHost {
   return async (uid, idToken, ctx) => {
     if (!host.sessionUrl) return 'skipped';
     try {
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
       if (appCheckToken) headers['x-firebase-appcheck'] = await appCheckToken();
+      if (serviceToken) headers['x-serverless-authorization'] = `Bearer ${await serviceToken()}`;
       const r = await fetchImpl(host.sessionUrl, {
         method: 'POST', headers, redirect: 'error', signal: AbortSignal.timeout(8000),
-        body: JSON.stringify({ identityToken: idToken, timezone: cleanTimezone(ctx.timezone), locale: ctx.locale }),
+        body: JSON.stringify({ identityToken: idToken, timezone: cleanTimezone(ctx.timezone), locale: ctx.locale, ...(host.channel ? { channel: host.channel } : {}) }),
       });
       if (!r.ok) throw new Error(`session endpoint answered ${r.status}`);
       const body = await r.json().catch(() => ({})) as { refreshToken?: unknown };
@@ -65,5 +73,19 @@ export function appCheckMinter(appId: string): () => Promise<string> {
     const t = await getAppCheck(getApps()[0] || initializeApp()).createToken(appId, { ttlMillis: 60 * 60_000 });
     cached = { token: t.token, until: Date.now() + Math.max(60_000, t.ttlMillis - 5 * 60_000) };
     return t.token;
+  };
+}
+
+/** Google ID tokens for the host's private Cloud Run API, from the runtime's own service account (metadata server).
+ *  The library keeps each token until shortly before it expires; a failed fetch is retried on the next join. */
+export function googleIdToken(audience: string): () => Promise<string> {
+  let client: Promise<{ getRequestHeaders(): Promise<Headers> }> | null = null;
+  return async () => {
+    try {
+      client ??= import('google-auth-library').then(({ GoogleAuth }) => new GoogleAuth().getIdTokenClient(audience));
+      const v = (await (await client).getRequestHeaders()).get('authorization') || '';
+      if (!/^Bearer \S+$/.test(v)) throw new Error('no ID token for the host audience');
+      return v.slice(7);
+    } catch (e) { client = null; throw e; }
   };
 }
