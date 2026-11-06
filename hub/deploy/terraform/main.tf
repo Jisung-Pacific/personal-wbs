@@ -1,0 +1,168 @@
+# PP WBS Hub inside an existing Firebase project (it shares that project's Firebase Auth users).
+# Creates only new resources and grants only new, narrowly scoped bindings; it never touches the project's (default)
+# database, its rules, its services or its Identity Platform settings. Review `terraform plan` before every apply.
+#
+#   - a separate Firestore database (default id "ppwbs") with delete protection, PITR and TTL on short-lived OAuth state
+#   - deny-all Security Rules on that database: only the hub's server identity reaches it
+#   - a dedicated service account: datastore.user on that one database (IAM condition), its signing-key secret,
+#     and optionally firebaseauth.viewer so sign-in can check revoked or disabled accounts
+#   - the Cloud Run service (public: MCP clients and OAuth redirects must reach it), min 0 instances
+
+terraform {
+  required_providers {
+    google = { source = "hashicorp/google", version = ">= 6.0" }
+  }
+}
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+locals {
+  db_name = "projects/${var.project_id}/databases/${var.database_id}"
+  sa      = "serviceAccount:${google_service_account.hub.email}"
+}
+
+resource "google_firestore_database" "hub" {
+  name                              = var.database_id
+  location_id                       = var.region
+  type                              = "FIRESTORE_NATIVE"
+  concurrency_mode                  = "PESSIMISTIC"
+  delete_protection_state           = "DELETE_PROTECTION_ENABLED"
+  point_in_time_recovery_enablement = "POINT_IN_TIME_RECOVERY_ENABLED"
+  deletion_policy                   = "ABANDON"
+}
+
+# expired OAuth requests, codes and refresh tokens disappear on their own (field `expire`)
+resource "google_firestore_field" "ttl" {
+  for_each   = toset(["oauth_requests", "oauth_codes", "oauth_refresh"])
+  database   = google_firestore_database.hub.name
+  collection = each.key
+  field      = "expire"
+  ttl_config {}
+}
+
+# no client SDK access at all; the hub's service account bypasses rules through IAM
+resource "google_firebaserules_ruleset" "hub" {
+  source {
+    files {
+      name    = "firestore.rules"
+      content = file("${path.module}/../firestore.rules")
+    }
+  }
+  depends_on = [google_firestore_database.hub]
+}
+resource "google_firebaserules_release" "hub" {
+  name         = "cloud.firestore/${var.database_id}"   # release name of a named database; confirm in the plan
+  ruleset_name = google_firebaserules_ruleset.hub.name
+}
+
+resource "google_service_account" "hub" {
+  account_id   = var.service_account_id
+  display_name = "PP WBS Hub runtime"
+}
+
+resource "google_project_iam_member" "datastore_hub_db_only" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = local.sa
+  condition {
+    title      = "ppwbs-hub-database-only"
+    expression = "resource.name == \"${local.db_name}\" || resource.name.startsWith(\"${local.db_name}/\")"
+  }
+}
+
+resource "google_project_iam_member" "auth_viewer" {
+  count   = var.check_revoked ? 1 : 0   # firebaseauth.users.get for checkRevoked; skip if the project reserves it
+  project = var.project_id
+  role    = "roles/firebaseauth.viewer"
+  member  = local.sa
+}
+
+resource "google_secret_manager_secret" "signing_jwk" {
+  secret_id = "${var.service_name}-signing-jwk"
+  replication {
+    auto {}
+  }
+}
+resource "google_secret_manager_secret_iam_member" "signing_jwk" {
+  secret_id = google_secret_manager_secret.signing_jwk.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.sa
+}
+
+resource "google_cloud_run_v2_service" "hub" {
+  name                = var.service_name
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = true
+
+  template {
+    service_account = google_service_account.hub.email
+    scaling {
+      min_instance_count = 0
+      max_instance_count = var.max_instances
+    }
+    containers {
+      image = var.image   # an immutable digest: …@sha256:…
+      resources {
+        limits   = { cpu = "1", memory = "512Mi" }
+        cpu_idle = true
+      }
+      env {
+        name  = "HUB_STORE"
+        value = "firestore"
+      }
+      env {
+        name  = "HUB_PUBLIC_URL"
+        value = var.public_url
+      }
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "HUB_FIRESTORE_DB"
+        value = var.database_id
+      }
+      env {
+        name  = "HUB_FIREBASE_WEB"
+        value = jsonencode(var.firebase_web)
+      }
+      env {
+        name  = "HUB_BRAND"
+        value = var.brand
+      }
+      env {
+        name  = "HUB_CHECK_REVOKED"
+        value = var.check_revoked ? "1" : "0"
+      }
+      env {
+        name  = "HUB_EXTRA_SCOPES"
+        value = jsonencode(var.extra_scopes)
+      }
+      env {
+        name = "HUB_SIGNING_JWK"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.signing_jwk.secret_id
+            version = var.signing_jwk_version   # a number, never "latest"
+          }
+        }
+      }
+    }
+  }
+  depends_on = [google_secret_manager_secret_iam_member.signing_jwk, google_project_iam_member.datastore_hub_db_only]
+}
+
+# MCP clients (Claude, ChatGPT, Gemini…) and OAuth redirects come from the internet; every route checks its own token
+resource "google_cloud_run_v2_service_iam_member" "public" {
+  name     = google_cloud_run_v2_service.hub.name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+output "service_url" { value = google_cloud_run_v2_service.hub.uri }
+output "service_account" { value = google_service_account.hub.email }
