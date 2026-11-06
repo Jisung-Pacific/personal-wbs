@@ -199,10 +199,19 @@ Before the first sign-in, Firebase console → Authentication → Settings → A
   $PUBLIC_HOST
   (if the project keeps that list in Terraform, add it there as well, or the project's next apply removes it)
 TXT
-if [ -n "$GITHUB_REPOSITORY" ]; then
-  echo
-  echo "For continuous deploys, set these as GitHub repository variables ($GITHUB_REPOSITORY → Settings → Secrets and variables → Actions → Variables):"
-  (cd "$TF" && terraform output -json ci_variables)
+if [ -n "$GITHUB_REPOSITORY" ]; then   # continuous deploys: six repository variables for the keyless workflow
+  CMDS=$(python3 -c '
+import json, shlex, sys
+v = json.loads(sys.argv[1] or "null")
+for k, x in (v or {}).items():
+    print("gh variable set %s -R %s --body %s" % (k, sys.argv[2], shlex.quote(x)))' "$(cd "$TF" && terraform output -json ci_variables)" "$GITHUB_REPOSITORY")
+  if [ -n "$CMDS" ] && command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+    say "GitHub variables for continuous deploys ($GITHUB_REPOSITORY)"; eval "$CMDS" && echo "set: pushes to $GITHUB_REF now deploy themselves"
+  elif [ -n "$CMDS" ]; then
+    echo
+    echo "For continuous deploys run these once (after: gh auth login), or enter them in GitHub → Settings → Secrets and variables → Actions → Variables:"
+    echo "$CMDS"
+  fi
 fi
 if [ -n "$PROXY_VER" ]; then
   echo
