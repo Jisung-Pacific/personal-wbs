@@ -68,6 +68,44 @@ resource "google_service_account_iam_member" "deployer_acts_as_runtime" {   # a 
   member             = "serviceAccount:${google_service_account.deployer[0].email}"
 }
 
+# ---- first-image fallback: Cloud Build under the hub's own builder account, for when pushing from the operator's
+# shell is not possible. Never the project's default build account nor another service's.
+resource "google_service_account" "builder" {
+  account_id   = "${var.service_account_id}-builder"
+  display_name = "PP WBS Hub image builder"
+}
+resource "google_storage_bucket" "build" {   # build sources only; deleted after a week
+  name                        = "${var.project_id}-${var.service_name}-build"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = true
+  lifecycle_rule {
+    condition {
+      age = 7
+    }
+    action {
+      type = "Delete"
+    }
+  }
+}
+resource "google_storage_bucket_iam_member" "builder_reads_source" {
+  bucket = google_storage_bucket.build.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.builder.email}"
+}
+resource "google_artifact_registry_repository_iam_member" "builder_push" {
+  location   = var.region
+  repository = google_artifact_registry_repository.hub.name
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.builder.email}"
+}
+resource "google_project_iam_member" "builder_logs" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.builder.email}"
+}
+
 output "ci_variables" {
   value = local.ci ? {
     GCP_WIF_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name

@@ -154,27 +154,42 @@ if ! gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then
 fi
 init_state
 
-say "step 1/4: image registry, KMS key, secrets — review the plan, then type yes"
+say "step 1/4: image registry, KMS key, secrets, image builder — review the plan, then type yes"
 (cd "$TF" && terraform apply -var image=none -var signing_jwk_version=0 \
   -target=google_artifact_registry_repository.hub -target=google_kms_crypto_key.account_keys \
-  -target=google_secret_manager_secret.signing_jwk -target=google_secret_manager_secret.proxy)
+  -target=google_secret_manager_secret.signing_jwk -target=google_secret_manager_secret.proxy \
+  -target=google_storage_bucket_iam_member.builder_reads_source -target=google_artifact_registry_repository_iam_member.builder_push \
+  -target=google_project_iam_member.builder_logs)
 
 say "step 2/4: first image"
 TAG="$IMAGE:bootstrap-$(git rev-parse --short HEAD 2>/dev/null || date +%s)"
+build_in_cloud() {   # Cloud Build under the hub's own builder account (created in step 1)
+  local cfg; cfg=$(mktemp --suffix=.json)
+  printf '{"steps":[{"name":"gcr.io/cloud-builders/docker","args":["build","--platform=linux/amd64","-t","%s","."]}],"images":["%s"],"serviceAccount":"projects/%s/serviceAccounts/%s-builder@%s.iam.gserviceaccount.com","options":{"logging":"CLOUD_LOGGING_ONLY"},"timeout":"1200s"}' \
+    "$TAG" "$TAG" "$PROJECT" "$SERVICE" "$PROJECT" > "$cfg"
+  gcloud builds submit . --config="$cfg" --gcs-source-staging-dir="gs://$PROJECT-$SERVICE-build/source"
+  rm -f "$cfg"
+  REF="$IMAGE@$(gcloud artifacts docker images describe "$TAG" --format='value(image_summary.digest)')"
+}
+PUSHED=
 if have_docker; then
   gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
   docker build -t "$TAG" .
-  docker push "$TAG"
-  REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAG")
-else
-  gcloud builds submit . --tag "$TAG"
-  REF="$IMAGE@$(gcloud artifacts docker images describe "$TAG" --format='value(image_summary.digest)')"
+  for i in 1 2 3; do
+    if docker push "$TAG"; then PUSHED=1; break; fi
+    echo "push failed ($i/3)"; [ "$i" = 3 ] || sleep 15
+  done
+  [ -n "$PUSHED" ] && REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAG")
+fi
+if [ -z "$PUSHED" ]; then
+  echo "building in Cloud Build instead (account $SERVICE-builder)"
+  build_in_cloud
 fi
 echo "image: $REF"
 
 say "step 3/4: keys (only the ones that do not exist yet)"
 if [ -z "$(latest_version "$SERVICE-signing-jwk")" ]; then
-  if have_docker; then docker run --rm "$REF" node dist/scripts/new-key.js
+  if have_docker; then docker run --rm "$TAG" node dist/scripts/new-key.js
   else npm ci --silent && npm run -s build && node dist/scripts/new-key.js; fi | gcloud secrets versions add "$SERVICE-signing-jwk" --data-file=-
 fi
 if [ "${PROXY:-}" = 1 ] && [ -z "$(latest_version "$SERVICE-proxy-secret")" ]; then
