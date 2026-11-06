@@ -1,0 +1,8 @@
+# Copy to wrangler.toml, fill in both values, then: npx wrangler deploy && npx wrangler secret put HUB_PROXY_SECRET
+name = "ppwbs-hub-proxy"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+routes = [{ pattern = "wbs.example.com", custom_domain = true }]   # your hub's host name; Cloudflare creates the DNS record
+
+[vars]
+ORIGIN = "https://ppwbs-hub-123456789012.asia-northeast3.run.app"
