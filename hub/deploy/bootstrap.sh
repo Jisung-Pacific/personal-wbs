@@ -19,7 +19,8 @@
 #   TF_STATE_BUCKET   <project>-ppwbs-hub-tfstate, versioned; Terraform state lives there, not in this clone
 # Optional: HOST_NAME, HOST_SESSION_URL, HOST_AUTH=google-oidc, HOST_AUDIENCE, HOST_CHANNEL, HOST_TERMS_URL,
 #   HOST_PRIVACY_URL, HOST_REQUIRED=1, HOST_APPCHECK_APP_ID, BRAND, CHECK_REVOKED=0, SUPPORT_EMAIL,
-#   PROXY=1 (a secret shared with a reverse proxy on your own domain), PLAN_ONLY=1 (create nothing: print the plan, stop).
+#   PROXY=1 (a secret shared with a reverse proxy on your own domain), PLAN_ONLY=1 (create nothing: print the plan, stop),
+#   BUILD=cloud (build the image in Cloud Build when this shell cannot push to Artifact Registry).
 #
 # It creates only new resources (deploy/terraform) and waits for your "yes" before every apply. After it, pushes to
 # GITHUB_REF roll new images by themselves (.github/workflows/hub-deploy.yml); run it again only to change infrastructure.
@@ -164,25 +165,31 @@ say "step 1/4: image registry, KMS key, secrets, image builder — review the pl
 say "step 2/4: first image"
 TAG="$IMAGE:bootstrap-$(git rev-parse --short HEAD 2>/dev/null || date +%s)"
 build_in_cloud() {   # Cloud Build under the hub's own builder account (created in step 1)
-  local cfg; cfg=$(mktemp --suffix=.json)
+  local cfg log i; cfg=$(mktemp --suffix=.json); log=$(mktemp)
   printf '{"steps":[{"name":"gcr.io/cloud-builders/docker","args":["build","--platform=linux/amd64","-t","%s","."]}],"images":["%s"],"serviceAccount":"projects/%s/serviceAccounts/%s-builder@%s.iam.gserviceaccount.com","options":{"logging":"CLOUD_LOGGING_ONLY"},"timeout":"1200s"}' \
     "$TAG" "$TAG" "$PROJECT" "$SERVICE" "$PROJECT" > "$cfg"
-  gcloud builds submit . --config="$cfg" --gcs-source-staging-dir="gs://$PROJECT-$SERVICE-build/source"
-  rm -f "$cfg"
+  for i in 1 2 3 4 5 6; do   # a builder account created moments ago can take a few minutes to reach Cloud Build
+    if gcloud builds submit . --config="$cfg" --gcs-source-staging-dir="gs://$PROJECT-$SERVICE-build/source" 2>&1 | tee "$log"; then break; fi
+    if [ "$i" -lt 6 ] && grep -q "Unknown service account" "$log"; then echo "builder account not visible to Cloud Build yet ($i/6); retrying in 30s"; sleep 30; continue; fi
+    rm -f "$cfg" "$log"; return 1
+  done
+  rm -f "$cfg" "$log"
   REF="$IMAGE@$(gcloud artifacts docker images describe "$TAG" --format='value(image_summary.digest)')"
 }
 PUSHED=
 if have_docker; then
-  gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-  docker build -t "$TAG" .
-  for i in 1 2 3; do
-    if docker push "$TAG"; then PUSHED=1; break; fi
-    echo "push failed ($i/3)"; [ "$i" = 3 ] || sleep 15
-  done
-  [ -n "$PUSHED" ] && REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAG")
+  docker build -t "$TAG" .   # the local copy also makes the signing key in step 3
+  if [ "${BUILD:-}" != cloud ]; then   # BUILD=cloud: this shell cannot reach the registry, go straight to Cloud Build
+    gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+    for i in 1 2; do
+      if docker push "$TAG"; then PUSHED=1; break; fi
+      echo "push failed ($i/2)"; [ "$i" = 2 ] || sleep 10
+    done
+    [ -n "$PUSHED" ] && REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAG")
+  fi
 fi
 if [ -z "$PUSHED" ]; then
-  echo "building in Cloud Build instead (account $SERVICE-builder)"
+  echo "building in Cloud Build (account $SERVICE-builder)"
   build_in_cloud
 fi
 echo "image: $REF"
