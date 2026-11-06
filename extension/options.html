@@ -24,6 +24,11 @@
     <p class="row"><span id="pending" class="muted small"></span><button id="clear" type="button">대기 중인 검색어 지우기</button></p>
   </section>
   <section>
+    <h2>지난 Google 검색 기록 가져오기</h2>
+    <p class="small muted">Google 테이크아웃(takeout.google.com)에서 "내 활동"을 JSON 형식으로 내보낸 뒤, 압축을 풀어 검색 폴더의 MyActivity.json을 고르세요. 파일 속 검색어와 시각만 받은 편지함으로 보냅니다.</p>
+    <div class="row"><input id="takeout" type="file" accept=".json,application/json"><span id="tk" class="muted small" role="status"></span></div>
+  </section>
+  <section>
     <h2>맞춤 지시문</h2>
     <p class="small muted">도구를 붙일 수 없는 AI 서비스의 맞춤 지시(사용자 지시)에 넣으세요. 일이 끝나면 답 끝에 PP-WBS-RECORD 줄을 붙입니다.</p>
     <textarea id="instr" readonly rows="9"></textarea>

@@ -185,6 +185,8 @@ resource "google_cloud_run_v2_service" "hub" {
           HUB_HOST_PRIVACY_URL     = var.host_privacy_url
           HUB_HOST_APPCHECK_APP_ID = var.host_appcheck_app_id
           HUB_HOST_REQUIRED        = var.host_required ? "1" : ""
+          HUB_SUPPORT_EMAIL        = var.support_email
+          HUB_OPENAI_APPS_CHALLENGE = var.openai_apps_challenge
         } : k => v if v != "" }
         content {
           name  = env.key

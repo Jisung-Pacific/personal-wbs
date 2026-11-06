@@ -21,6 +21,8 @@
 //   HUB_HOST_TERMS_URL, HUB_HOST_PRIVACY_URL   the host's terms and privacy policy, linked next to the consent checkbox
 //   HUB_HOST_APPCHECK_APP_ID   the hub's app id in the host's Firebase project (App Check custom provider), if the host enforces App Check
 //   HUB_HOST_REQUIRED     1 → refuse the connection when joining the host fails (default: connect anyway, retry next time)
+//   HUB_SUPPORT_EMAIL     contact shown on the public pages (directories ask for one)
+//   HUB_OPENAI_APPS_CHALLENGE  the domain-verification token from OpenAI's submission portal, served at /.well-known/openai-apps-challenge
 
 import type { HostConfig } from './auth/host.js';
 
@@ -43,6 +45,8 @@ export interface Config {
   localKek?: string;
   allowPlain: boolean;
   host: HostConfig;
+  supportEmail?: string;
+  openaiChallenge?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -79,6 +83,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       appCheckAppId: env.HUB_HOST_APPCHECK_APP_ID || undefined,
       required: env.HUB_HOST_REQUIRED === '1',
     },
+    supportEmail: env.HUB_SUPPORT_EMAIL || undefined,
+    openaiChallenge: env.HUB_OPENAI_APPS_CHALLENGE || undefined,
   };
 }
 

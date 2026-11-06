@@ -1,5 +1,5 @@
 // Options: the hub URL, sign-in (here, because a tab survives the sign-in window), the search opt-in and the instruction text.
-import { hubUrl, setHub, signIn, signOut, signedIn, BUILD_HUB } from './lib.js';
+import { api, hubUrl, setHub, signIn, signOut, signedIn, BUILD_HUB } from './lib.js';
 const $ = id => document.getElementById(id);
 
 const INSTR = {
@@ -36,5 +36,24 @@ $('clear').onclick = async () => { await chrome.storage.local.set({ pending: [] 
 $('copy').onclick = async () => {
   try { await navigator.clipboard.writeText($('instr').value); $('copied').textContent = '복사했습니다'; }
   catch { $('instr').select(); $('copied').textContent = '선택했습니다. Ctrl+C로 복사하세요'; }
+};
+// Google Takeout "My Activity" (JSON): search entries carry the results URL, whose q parameter is the query in any language
+$('takeout').onchange = async () => {
+  const f = $('takeout').files[0]; if (!f) return;
+  try {
+    const all = JSON.parse(await f.text());
+    const items = (Array.isArray(all) ? all : []).map(e => {
+      try { const u = new URL(e.titleUrl || ''); const q = /(^|\.)google\.[a-z.]+$/.test(u.hostname) && u.pathname === '/search' && u.searchParams.get('q');
+        return q && e.time ? { kind: 'search', source: 'takeout', at: String(e.time).slice(0, 25), title: q.slice(0, 300), url: `https://www.google.com/search?q=${encodeURIComponent(q)}`, text: '' } : null; } catch { return null; }
+    }).filter(Boolean);
+    if (!items.length) { $('tk').textContent = '검색 기록을 찾지 못했습니다. 검색 폴더의 MyActivity.json인지 확인하세요.'; return; }
+    let added = 0;
+    for (let i = 0; i < items.length; i += 100) {
+      const r = await api('/inbox', 'POST', { items: items.slice(i, i + 100) });
+      if (!r.ok) throw new Error(r.body.message || r.body.error || `inbox ${r.status}`);
+      added += r.body.added; $('tk').textContent = `${Math.min(i + 100, items.length)} / ${items.length}`;
+    }
+    $('tk').textContent = `검색어 ${items.length}개 중 새로 ${added}개를 보냈습니다.`;
+  } catch (e) { $('tk').textContent = String(e.message || e); }
 };
 refresh();

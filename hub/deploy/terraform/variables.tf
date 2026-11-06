@@ -78,6 +78,15 @@ variable "host_required" {
   type    = bool
   default = false
 }
+variable "support_email" {
+  type    = string
+  default = ""
+}
+variable "openai_apps_challenge" {
+  type        = string
+  default     = ""
+  description = "Domain-verification token from OpenAI's plugin submission portal."
+}
 variable "github_repository" {
   type        = string
   default     = ""

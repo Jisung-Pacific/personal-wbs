@@ -11,6 +11,7 @@ import { buildMcp } from './mcp.js';
 import { openapi, restRouter, type Authed } from './rest.js';
 import { Ledger } from './wbs/service.js';
 import { Inbox } from './wbs/inbox.js';
+import { landingPage, pickLang, privacyPage } from './site.js';
 
 export const VERSION = '0.1.0';
 
@@ -63,11 +64,9 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   app.use('/v1', bearer('v1'), restRouter(ledger, inbox));
   app.get('/openapi.json', (_req, res) => { res.json(openapi(cfg, VERSION)); });
   app.get('/healthz', (_req, res) => { res.json({ ok: true, version: VERSION }); });
-  app.get('/', (_req, res) => {
-    res.type('html').send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PP WBS Hub</title></head>
-<body style="font:15px/1.6 system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px"><h1>PP WBS Hub</h1>
-<p>한 계정에 하나의 작업 원장. 어떤 에이전트에서든 같은 원장에 기록하고 읽습니다.</p>
-<ul><li>MCP 서버: <code>${u}/mcp</code> (Claude·ChatGPT·Gemini 등에 커스텀 커넥터로 추가)</li><li>REST·OpenAPI: <code>${u}/openapi.json</code></li></ul></body></html>`);
-  });
+  // public pages: how to connect each agent, the privacy notice, and directory domain verification
+  app.get('/', (req, res) => { res.set('Cache-Control', 'public, max-age=300').type('html').send(landingPage(cfg, pickLang(req.get('accept-language')))); });
+  app.get('/privacy', (req, res) => { res.set('Cache-Control', 'public, max-age=300').type('html').send(privacyPage(cfg, pickLang(req.get('accept-language')))); });
+  app.get('/.well-known/openai-apps-challenge', (_req, res) => { if (!cfg.openaiChallenge) return res.status(404).end(); res.type('text/plain').send(cfg.openaiChallenge); });
   return app;
 }
