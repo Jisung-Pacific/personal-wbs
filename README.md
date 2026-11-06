@@ -16,6 +16,7 @@ One ledger of everything you do, across years, kept up to date by Claude agents,
   - **Project-management techniques**: Little's law (WIP = throughput × cycle time), service level expectation (SLE) and ageing work in progress, Monte Carlo forecasts of when open work will be done, XmR process-behaviour charts of weekly throughput, topic clustering of task text, and work phases over time.
   - **Status check mode**: walks through open tasks one by one with Done / In progress / Blocked / Backlog / Skip buttons.
   - Ledger and coverage views to read the raw rows and see how completely each source has been swept.
+  - **Languages and accessibility**: Korean, English and Simplified Chinese from the globe icon. The demo build was checked with axe-core 4 against WCAG 2.1 A and AA on 16 views, in Korean and English, at phone and desktop widths, in light and dark themes: 0 violations (2026-11-06).
 - **Agent files.** `summary.json` and `llms.txt` let any agent answer "what is blocked?", "what did I finish this week?" or "how am I doing?" without parsing the CSV.
 
 - **Why it works**: the research behind each design choice, with verified references: [docs/research.md](docs/research.md).
