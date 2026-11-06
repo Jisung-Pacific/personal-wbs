@@ -75,7 +75,7 @@ resource "google_service_account" "builder" {
   display_name = "PP WBS Hub image builder"
 }
 resource "google_storage_bucket" "build" {   # build sources only; deleted after a week
-  name                        = "${var.project_id}-${var.service_name}-build"
+  name                        = "${var.project_id}-${var.service_name}-src"
   location                    = var.region
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"

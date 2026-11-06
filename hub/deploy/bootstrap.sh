@@ -26,6 +26,22 @@
 # GITHUB_REF roll new images by themselves (.github/workflows/hub-deploy.yml); run it again only to change infrastructure.
 set -euo pipefail
 cd "$(dirname "$0")/.."                                    # hub/
+# Cloud Shell's command-not-found handler prints advice and exits 0, so `set -e` would sail past a missing tool:
+# check every tool by path first, and install Terraform (no longer shipped in Cloud Shell) into ~/.local/bin.
+TF_VERSION=1.9.8
+export PATH="$HOME/.local/bin:$PATH"
+for t in gcloud curl python3 git openssl; do type -P "$t" >/dev/null || { echo "missing tool: $t"; exit 1; }; done
+if ! type -P terraform >/dev/null; then
+  echo "== installing Terraform $TF_VERSION into ~/.local/bin"
+  type -P unzip >/dev/null || { echo "missing tool: unzip"; exit 1; }
+  TFD=$(mktemp -d); TFZ="terraform_${TF_VERSION}_linux_amd64.zip"
+  curl -fsSLo "$TFD/$TFZ" "https://releases.hashicorp.com/terraform/$TF_VERSION/$TFZ"
+  curl -fsSLo "$TFD/sums" "https://releases.hashicorp.com/terraform/$TF_VERSION/terraform_${TF_VERSION}_SHA256SUMS"
+  (cd "$TFD" && grep " $TFZ\$" sums | sha256sum -c -)
+  mkdir -p "$HOME/.local/bin" && unzip -o -q "$TFD/$TFZ" terraform -d "$HOME/.local/bin" && rm -rf "$TFD"
+fi
+type -P terraform >/dev/null || { echo "Terraform is not available"; exit 1; }
+terraform -version | sed -n 1p
 SERVICE=ppwbs-hub
 TF=deploy/terraform
 PROJECT=${PROJECT:-$(gcloud config get-value project 2>/dev/null)}
@@ -35,6 +51,7 @@ gcloud config set project "$PROJECT" >/dev/null
 NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
 PUBLIC_URL=${PUBLIC_URL:-https://$SERVICE-$NUMBER.$REGION.run.app}
 PUBLIC_URL=${PUBLIC_URL%/}
+[ "${CLOUD_SHELL:-}" = true ] && BUILD=${BUILD:-cloud}   # Cloud Shell's docker cannot reach the registry; build in Cloud Build
 PUBLIC_HOST=${PUBLIC_URL#https://}; PUBLIC_HOST=${PUBLIC_HOST%%/*}
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/$SERVICE/hub"
 BUCKET=${TF_STATE_BUCKET:-$PROJECT-$SERVICE-tfstate}
@@ -42,7 +59,19 @@ say() { printf '\n== %s\n' "$*"; }
 api() {   # GET a Google API as you (the owner), billed to this project
   curl -fsS -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "x-goog-user-project: $PROJECT" "$1"
 }
-have_docker() { command -v docker >/dev/null && docker info >/dev/null 2>&1; }
+have_docker() { type -P docker >/dev/null && docker info >/dev/null 2>&1; }
+new_jwk() {   # a fresh ES256 private JWK for the token signer, from openssl through pipes only (never written to disk)
+  openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null | openssl ec -text -noout 2>/dev/null | python3 -c '
+import base64, datetime, json, re, secrets, sys
+t = sys.stdin.read()
+hexof = lambda name: re.sub(r"[^0-9a-f]", "", re.search(name + r":\s*((?:\s*[0-9a-f]{2}:?)+)", t).group(1))
+d = bytes.fromhex(hexof("priv")).rjust(32, b"\0")[-32:]
+pub = bytes.fromhex(hexof("pub"))
+assert pub[0] == 4 and len(pub) == 65, "unexpected public key form"
+b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+kid = "hub-" + datetime.date.today().isoformat() + "-" + secrets.token_hex(3)
+sys.stdout.write(json.dumps({"kty": "EC", "crv": "P-256", "x": b64(pub[1:33]), "y": b64(pub[33:]), "d": b64(d), "alg": "ES256", "use": "sig", "kid": kid}, separators=(",", ":")))'
+}
 latest_version() {   # newest enabled version number of a secret, or nothing
   gcloud secrets versions list "$1" --filter=state=ENABLED --sort-by=~createTime --limit=1 --format='value(name)' --quiet 2>/dev/null | sed 's#.*/##' || true
 }
@@ -172,37 +201,34 @@ build_in_cloud() {   # a regional Cloud Build under the hub's own builder accoun
   printf '{"steps":[{"name":"gcr.io/cloud-builders/docker","args":["build","--platform=linux/amd64","-t","%s","."]}],"images":["%s"],"serviceAccount":"%s","options":{"logging":"CLOUD_LOGGING_ONLY"},"timeout":"1200s"}' \
     "$TAG" "$TAG" "$sa" > "$cfg"
   # regional, as a user-specified account needs: the global endpoint answered "Unknown service account" for this one
-  for i in 1 2 3; do   # a builder account created moments ago can take a minute to reach Cloud Build
+  for i in 1 2 3 4 5; do   # a builder account created moments ago can take a minute or two to reach Cloud Build
     if gcloud builds submit . --region="$REGION" --config="$cfg" --service-account="$sa" \
-         --gcs-source-staging-dir="gs://$PROJECT-$SERVICE-build/source" 2>&1 | tee "$log"; then break; fi
-    if [ "$i" -lt 3 ] && grep -q "Unknown service account" "$log"; then echo "builder account not visible to Cloud Build yet ($i/3); retrying in 30s"; sleep 30; continue; fi
+         --gcs-source-staging-dir="gs://$PROJECT-$SERVICE-src/source" 2>&1 | tee "$log"; then break; fi
+    if [ "$i" -lt 5 ] && grep -q "Unknown service account" "$log"; then echo "builder account not visible to Cloud Build yet ($i/5); retrying in 30s"; sleep 30; continue; fi
     rm -f "$cfg" "$log"; return 1
   done
   rm -f "$cfg" "$log"
   REF="$IMAGE@$(gcloud artifacts docker images describe "$TAG" --format='value(image_summary.digest)')"
 }
 PUSHED=
-if have_docker; then
-  docker build -t "$TAG" .   # the local copy also makes the signing key in step 3
-  if [ "${BUILD:-}" != cloud ]; then   # BUILD=cloud: this shell cannot reach the registry, go straight to Cloud Build
-    gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-    for i in 1 2; do
-      if docker push "$TAG"; then PUSHED=1; break; fi
-      echo "push failed ($i/2)"; [ "$i" = 2 ] || sleep 10
-    done
-    [ -n "$PUSHED" ] && REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAG")
-  fi
+if [ "${BUILD:-}" != cloud ] && have_docker; then
+  gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+  docker build -t "$TAG" .
+  for i in 1 2; do
+    if docker push "$TAG"; then PUSHED=1; break; fi
+    echo "push failed ($i/2)"; [ "$i" = 2 ] || sleep 10
+  done
+  [ -n "$PUSHED" ] && REF=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAG")
 fi
 if [ -z "$PUSHED" ]; then
-  echo "building in Cloud Build (account $SERVICE-builder)"
+  echo "building in Cloud Build (account $SERVICE-builder, region $REGION)"
   build_in_cloud
 fi
 echo "image: $REF"
 
 say "step 3/4: keys (only the ones that do not exist yet)"
 if [ -z "$(latest_version "$SERVICE-signing-jwk")" ]; then
-  if have_docker; then docker run --rm "$TAG" node dist/scripts/new-key.js
-  else npm ci --silent && npm run -s build && node dist/scripts/new-key.js; fi | gcloud secrets versions add "$SERVICE-signing-jwk" --data-file=-
+  new_jwk | gcloud secrets versions add "$SERVICE-signing-jwk" --data-file=-
 fi
 if [ "${PROXY:-}" = 1 ] && [ -z "$(latest_version "$SERVICE-proxy-secret")" ]; then
   python3 -c 'import secrets; print(secrets.token_urlsafe(48), end="")' | gcloud secrets versions add "$SERVICE-proxy-secret" --data-file=-
