@@ -106,10 +106,11 @@ resource "google_project_iam_member" "builder_logs" {
   member  = "serviceAccount:${google_service_account.builder.email}"
 }
 
+# try(): bootstrap applies in steps (-target), and outputs are evaluated before the CI resources exist
 output "ci_variables" {
   value = local.ci ? {
-    GCP_WIF_PROVIDER = google_iam_workload_identity_pool_provider.github[0].name
-    GCP_DEPLOYER_SA  = google_service_account.deployer[0].email
+    GCP_WIF_PROVIDER = try(google_iam_workload_identity_pool_provider.github[0].name, null)
+    GCP_DEPLOYER_SA  = try(google_service_account.deployer[0].email, null)
     GCP_REGION       = var.region
     GCP_PROJECT      = var.project_id
     HUB_SERVICE      = var.service_name

@@ -247,6 +247,6 @@ resource "google_cloud_run_v2_service_iam_member" "public" {
   member   = "allUsers"
 }
 
-output "service_url" { value = google_cloud_run_v2_service.hub.uri }
-output "service_account" { value = google_service_account.hub.email }
+output "service_url" { value = try(google_cloud_run_v2_service.hub.uri, null) }
+output "service_account" { value = try(google_service_account.hub.email, null) }
 output "kms_key" { value = google_kms_crypto_key.account_keys.id }
