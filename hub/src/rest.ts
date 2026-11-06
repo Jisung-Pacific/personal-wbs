@@ -3,6 +3,7 @@
 import express, { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { Ledger, LedgerError, type Actor } from './wbs/service.js';
+import type { Inbox } from './wbs/inbox.js';
 import type { Config } from './config.js';
 
 export type Authed = Request & { actor?: Actor; scopes?: string[] };
@@ -17,7 +18,7 @@ function send(res: Response, f: () => Promise<unknown>) {
 const need = (scope: string) => (req: Authed, res: Response, next: () => void) =>
   req.scopes?.includes(scope) ? next() : res.status(403).set('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${scope}"`).json({ error: 'insufficient_scope', scope });
 
-export function restRouter(ledger: Ledger): Router {
+export function restRouter(ledger: Ledger, inbox: Inbox): Router {
   const r = Router(); r.use(express.json({ limit: '256kb' }));
   const list = (v: unknown) => typeof v === 'string' && v ? v.split(',') : undefined;
   r.get('/rows', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.search(req.actor!.uid, {
@@ -29,6 +30,9 @@ export function restRouter(ledger: Ledger): Router {
   r.get('/export', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.exportCsv(req.actor!.uid)));
   r.post('/rows', need('wbs.write'), (req: Authed, res) => send(res, () => ledger.add(req.actor!, req.body)));
   r.patch('/rows/:year/:code', need('wbs.write'), (req: Authed, res) => send(res, () => ledger.update(req.actor!, { ...req.body, year: String(req.params.year), code: String(req.params.code) })));
+  r.post('/inbox', need('wbs.write'), (req: Authed, res) => send(res, () => inbox.add(req.actor!.uid, req.body)));
+  r.get('/inbox', need('wbs.read'), (req: Authed, res) => send(res, () => inbox.list(req.actor!.uid, { status: req.query.status || undefined, limit: req.query.limit ? Number(req.query.limit) : undefined })));
+  r.post('/inbox/mark', need('wbs.write'), (req: Authed, res) => send(res, () => inbox.mark(req.actor!.uid, req.body)));
   return r;
 }
 
@@ -59,6 +63,12 @@ export function openapi(cfg: Config, version: string) {
       },
       '/packages/{year}': { get: { operationId: 'listPackages', summary: 'Packages of a year and the next free codes', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Packages' } } } },
       '/summary': { get: { operationId: 'summary', summary: 'Counts, open tasks, latest changes', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Summary' } } } },
+      '/inbox': {
+        post: { operationId: 'addToInbox', summary: 'Drop raw material (a chat, a search, a note) to be turned into rows later', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['items'], properties: { items: { type: 'array', maxItems: 100, items: { type: 'object', required: ['kind', 'source', 'at'], properties: {
+          kind: { type: 'string', enum: ['chat', 'search', 'note', 'file', 'event', 'record'] }, source: { type: 'string' }, at: { type: 'string' }, title: { type: 'string' }, text: { type: 'string', maxLength: 20000 }, url: { type: 'string' } } } } } } } } }, responses: { 200: { description: 'Stored; existing items unchanged' } } },
+        get: { operationId: 'listInbox', summary: 'Items waiting to be turned into rows', parameters: [{ name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['new', 'merged', 'skipped'] } }, { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } }], responses: { 200: { description: 'Items' } } },
+      },
+      '/inbox/mark': { post: { operationId: 'markInbox', summary: 'Mark items merged (with the codes they became) or skipped', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['ids', 'status'], properties: { ids: { type: 'array', items: { type: 'string' } }, status: { type: 'string', enum: ['merged', 'skipped'] }, ref: { type: 'string' } } } } } }, responses: { 200: { description: 'Marked' } } } },
     },
   };
 }

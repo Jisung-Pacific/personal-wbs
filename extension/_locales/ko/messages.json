@@ -1,0 +1,5 @@
+{
+  "name": { "message": "PP WBS — 어느 AI 대화든 작업 원장으로" },
+  "description": { "message": "DeepSeek·Grok·Meta AI·Kimi 등 어느 AI 대화 사이트의 대화든 내 PP WBS 작업 원장으로 보냅니다. 선택: Google 검색어." },
+  "cmdSend": { "message": "이 대화를 PP WBS로 보내기" }
+}

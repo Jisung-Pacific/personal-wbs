@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>PP WBS — 설정</title><link rel="stylesheet" href="ui.css"></head>
+<body class="opts">
+<main>
+  <h1><img src="icons/48.png" width="28" height="28" alt=""> PP WBS</h1>
+  <section>
+    <h2>계정</h2>
+    <label for="hub">허브 주소</label>
+    <div class="row"><input id="hub" type="url" placeholder="https://wbs.example.com" autocomplete="off"><button id="save" type="button">저장</button></div>
+    <p id="state" class="muted"></p>
+    <div class="row"><button id="in" class="primary" type="button">로그인</button><button id="out" type="button">로그아웃</button></div>
+  </section>
+  <section>
+    <h2>무엇을 보내나</h2>
+    <ul class="small">
+      <li><b>이 대화 보내기</b>: 누를 때만, 열린 탭의 대화 텍스트·제목·주소를 내 계정의 받은 편지함으로 보냅니다. 이후 에이전트가 일이 된 것만 원장 행으로 만듭니다.</li>
+      <li><b>PP-WBS-RECORD 줄</b>: 그 대화에 이 줄이 있으면 원장에 바로 기록합니다. 아래 지시문을 DeepSeek·Grok·Meta AI·Kimi 같은 곳의 맞춤 지시에 넣으면 생깁니다.</li>
+      <li>보낸 내용은 허브에서 계정별 키로 암호화되어 저장되고, 내 계정 말고는 아무도 읽을 수 없습니다. 처리된 항목은 30일 뒤 지워집니다.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Google 검색어 (선택, 기본 꺼짐)</h2>
+    <label class="chk"><input id="search" type="checkbox"> 켜면 www.google.com 검색 결과 화면의 검색어와 시각만 15분마다 받은 편지함으로 보냅니다. 결과·클릭·다른 사이트는 보지 않습니다.</label>
+    <p class="row"><span id="pending" class="muted small"></span><button id="clear" type="button">대기 중인 검색어 지우기</button></p>
+  </section>
+  <section>
+    <h2>맞춤 지시문</h2>
+    <p class="small muted">도구를 붙일 수 없는 AI 서비스의 맞춤 지시(사용자 지시)에 넣으세요. 일이 끝나면 답 끝에 PP-WBS-RECORD 줄을 붙입니다.</p>
+    <textarea id="instr" readonly rows="9"></textarea>
+    <div class="row"><button id="copy" type="button">복사</button><span id="copied" class="muted small" role="status"></span></div>
+  </section>
+</main>
+<script type="module" src="options.js"></script>
+</body></html>

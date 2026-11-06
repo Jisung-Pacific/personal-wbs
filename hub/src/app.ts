@@ -10,11 +10,12 @@ import { oauthRouter, resourceMetadata, serverMetadata } from './auth/oauth.js';
 import { buildMcp } from './mcp.js';
 import { openapi, restRouter, type Authed } from './rest.js';
 import { Ledger } from './wbs/service.js';
+import { Inbox } from './wbs/inbox.js';
 
 export const VERSION = '0.1.0';
 
 export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verifyIdToken: VerifyIdToken, joinHost?: JoinHost) {
-  const app = express(), ledger = new Ledger(store), u = cfg.publicUrl;
+  const app = express(), ledger = new Ledger(store), inbox = new Inbox(store), u = cfg.publicUrl;
   app.disable('x-powered-by');
   app.set('trust proxy', 1);   // Cloud Run's front end sets X-Forwarded-For; the rate limiter keys on the caller
   app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff').set('Referrer-Policy', 'no-referrer'); next(); });
@@ -46,7 +47,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
 
   // MCP over Streamable HTTP, stateless: one server and transport per request, JSON responses
   app.post('/mcp', bearer('mcp'), express.json({ limit: '1mb' }), async (req: Authed, res) => {
-    const server = buildMcp(ledger, req.actor!, req.scopes!, VERSION);
+    const server = buildMcp(ledger, req.actor!, req.scopes!, VERSION, inbox);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { void transport.close(); void server.close(); });
     try {
@@ -59,7 +60,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   });
   app.all('/mcp', bearer('mcp'), (_req, res) => { res.status(405).set('Allow', 'POST').json({ error: 'method_not_allowed' }); });
 
-  app.use('/v1', bearer('v1'), restRouter(ledger));
+  app.use('/v1', bearer('v1'), restRouter(ledger, inbox));
   app.get('/openapi.json', (_req, res) => { res.json(openapi(cfg, VERSION)); });
   app.get('/healthz', (_req, res) => { res.json({ ok: true, version: VERSION }); });
   app.get('/', (_req, res) => {

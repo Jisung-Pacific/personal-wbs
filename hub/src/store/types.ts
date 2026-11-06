@@ -15,6 +15,21 @@ export interface LedgerEvent {
 
 export interface RowFilter { year?: string; status?: string[]; packageCode?: string; parentCode?: string }
 
+/** Raw material captured anywhere — a chat on a site without tools, a search, a note, a calendar event — waiting to
+ *  become ledger rows. Agents read the inbox, turn what is work into rows, and mark each item merged or skipped. */
+export interface InboxItem {
+  id: string;            // derived from source, url, time and title, so sending the same item again changes nothing
+  kind: 'chat' | 'search' | 'note' | 'file' | 'event' | 'record';
+  source: string;        // chatgpt, deepseek, grok, meta-ai, kimi, gemini, perplexity, google-search, takeout, extension, …
+  at: string;            // when it happened (YYYY-MM-DD or an ISO date-time)
+  title: string;
+  text: string;          // at most 20,000 characters
+  url: string;
+  status: 'new' | 'merged' | 'skipped';
+  added: number;         // when the hub received it (ms)
+  ref: string;           // the ledger code(s) it became, once merged
+}
+
 /** Inside one ledger transaction: reads see a consistent snapshot, writes land together or not at all. */
 export interface LedgerTx {
   rows(filter?: RowFilter): Promise<Row[]>;
@@ -64,6 +79,12 @@ export interface Store {
   /** Marks the token used and returns it as it was; null when unknown. A second use returns it with used = true. */
   useRefresh(hash: string): Promise<RefreshRecord | null>;
   revokeFamily(family: string): Promise<void>;
+  // inbox
+  /** Stores new items; items whose id already exists are left as they are. */
+  putInbox(uid: string, items: InboxItem[]): Promise<{ added: number; existing: number }>;
+  inbox(uid: string, f?: { status?: InboxItem['status']; limit?: number }): Promise<InboxItem[]>;
+  /** Marks items processed; processed items are removed after a retention period (Firestore TTL on `expire`). */
+  markInbox(uid: string, ids: string[], status: 'merged' | 'skipped', ref?: string): Promise<number>;
   // account
   /** A credential kept for the account (sealed at rest in the Firestore store), e.g. the host product's session. */
   putSecret(uid: string, name: string, value: unknown): Promise<void>;

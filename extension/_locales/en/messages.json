@@ -1,0 +1,5 @@
+{
+  "name": { "message": "PP WBS — log your work from any AI chat" },
+  "description": { "message": "Send a conversation from any AI chat site (DeepSeek, Grok, Meta AI, Kimi, …) to your PP WBS work ledger. Optional: your Google searches." },
+  "cmdSend": { "message": "Send this chat to PP WBS" }
+}

@@ -138,6 +138,14 @@ The 22 columns of `wbs.csv` (English headers; Korean headers in brackets):
 | **Sends** | Nothing to the author or to any other service: no server, no telemetry, no analytics. The one write that leaves Claude is the commit to your own Git repository, made only if you chose that location and asked for it. |
 | **Personal data** | Read through your connectors to find your work, not stored. Rows describe the work and name organisations and roles, never other people's names, e-mail addresses or phone numbers (`validate.py` warns if one slips in). |
 | **Retention** | Nothing is kept outside your own files. |
+
+### Optional parts that do send data: the hub and the browser extension
+
+- [`hub/`](hub/) is a server you (or your organisation) run: one ledger per account behind OAuth, served to every agent
+  as an MCP server and a REST API. Ledger rows, history and inbox items are sealed with a per-account key wrapped by Cloud
+  KMS; deleting an account deletes its key first.
+- [`extension/`](extension/) is a browser extension that sends, only on your click, the conversation on the open tab of
+  an AI chat site (and, only if you switch it on, your Google search queries) to your own account on that hub.
 | **Optional autolog** | The separate `personal-wbs-autolog` plugin writes, on your computer only, the ID, time, folder and transcript path of each finished Claude Code session to its own data folder. Transcripts are read only when you approve logging them. |
 
 The full policy is in [PRIVACY.md](PRIVACY.md); the data flow is drawn in [docs/data-flow.md](docs/data-flow.md), and security reporting is in [SECURITY.md](SECURITY.md).

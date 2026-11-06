@@ -39,7 +39,7 @@ resource "google_firestore_database" "hub" {
 
 # expired OAuth requests, codes and refresh tokens disappear on their own (field `expire`)
 resource "google_firestore_field" "ttl" {
-  for_each   = toset(["oauth_requests", "oauth_codes", "oauth_refresh"])
+  for_each   = toset(["oauth_requests", "oauth_codes", "oauth_refresh", "inbox"])   # inbox: processed items, 30 days after
   database   = google_firestore_database.hub.name
   collection = each.key
   field      = "expire"

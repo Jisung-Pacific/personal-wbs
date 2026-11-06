@@ -4,6 +4,7 @@
 //   users/{uid}/rows/{year}_{code}     one ledger row: {year, code, enc} — the row itself is sealed (see crypto/envelope.ts)
 //   users/{uid}/events/{auto id}       one history line: {year, code, at, seq, enc}
 //   users/{uid}/secrets/{name}         a stored credential (e.g. the host product's session): {enc}
+//   users/{uid}/inbox/{id}             captured raw material: {status, added, ref, expire?, enc}
 //   keys/{uid}                         the account's data key, wrapped by the KMS key; deleting it shreds the account
 // year and code stay readable so queries can select a year or a task; everything else is ciphertext.
 //   oauth_clients/{sha256(client_id)}  registered or metadata-document clients
@@ -11,7 +12,7 @@
 import { createHash } from 'node:crypto';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
-import type { AuthCode, AuthRequest, LedgerEvent, LedgerTx, OAuthClient, RefreshRecord, Row, RowFilter, Store } from './types.js';
+import type { AuthCode, AuthRequest, InboxItem, LedgerEvent, LedgerTx, OAuthClient, RefreshRecord, Row, RowFilter, Store } from './types.js';
 import { matches } from './memory.js';
 import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from '../crypto/envelope.js';
 
@@ -110,6 +111,33 @@ export class FirestoreStore implements Store {
       sealedEvs.forEach(([ref, d]) => t.set(ref, d));
       return out;
     });
+  }
+
+  private inboxCol(uid: string) { return this.db.collection('users').doc(uid).collection('inbox'); }
+  async putInbox(uid: string, items: InboxItem[]) {
+    await this.envelope.dek(uid);
+    const res = await Promise.allSettled(items.map(async it => {
+      const { status, added, ref, ...body } = it;
+      await this.inboxCol(uid).doc(it.id).create({ status, added, ref, enc: await this.envelope.seal(uid, `inbox/${it.id}`, body) });
+    }));
+    const existing = res.filter(r => r.status === 'rejected' && (r.reason as { code?: number }).code === 6).length;
+    const failed = res.find(r => r.status === 'rejected' && (r.reason as { code?: number }).code !== 6);
+    if (failed) throw (failed as PromiseRejectedResult).reason;
+    return { added: items.length - existing, existing };
+  }
+  async inbox(uid: string, f?: { status?: InboxItem['status']; limit?: number }) {
+    let q: Query = this.inboxCol(uid);
+    if (f?.status) q = q.where('status', '==', f.status);
+    const docs = (await q.limit(1000).get()).docs.sort((a, b) => (b.get('added') as number) - (a.get('added') as number)).slice(0, f?.limit ?? 50);
+    return Promise.all(docs.map(async d => {
+      const x = d.data(), body = await this.envelope.open<Omit<InboxItem, 'status' | 'added' | 'ref'>>(uid, `inbox/${d.id}`, x.enc as Sealed);
+      return { ...body, id: d.id, status: x.status, added: x.added, ref: x.ref || '' } as InboxItem;
+    }));
+  }
+  async markInbox(uid: string, ids: string[], status: 'merged' | 'skipped', ref = '') {
+    const keep = expire(Date.now() + 30 * 24 * 3600e3);   // processed items leave after 30 days
+    const out = await Promise.allSettled(ids.map(id => this.inboxCol(uid).doc(id).update({ status, ref, expire: keep })));
+    return out.filter(r => r.status === 'fulfilled').length;
   }
 
   async putSecret(uid: string, name: string, value: unknown) {

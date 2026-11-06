@@ -117,7 +117,7 @@ test('MCP tools: add, duplicate guard, steps, update, isolation, scope-limited t
     const t = await connect(base, { uid: 'u_j', clientName: 'Claude' });
     const c = await mcp(base, t.access_token);
     const names = (await c.listTools()).tools.map(x => x.name).sort();
-    assert.deepEqual(names, ['wbs_add', 'wbs_export', 'wbs_get', 'wbs_packages', 'wbs_search', 'wbs_summary', 'wbs_update']);
+    assert.deepEqual(names, ['wbs_add', 'wbs_export', 'wbs_get', 'wbs_inbox_add', 'wbs_inbox_list', 'wbs_inbox_mark', 'wbs_packages', 'wbs_search', 'wbs_summary', 'wbs_update']);
     // a new package needs its area; then tasks take the next free code
     const a1 = json(await c.callTool({ name: 'wbs_add', arguments: { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: 'PP WBS 허브 MCP 서버와 OAuth 인가 서버 구현', start: '2026-11-06', status: '진행 중', evidence: 'cc:test' } }));
     assert.equal(a1.created.code, '5.3.1'); assert.equal(a1.created.source, 'Claude');
@@ -141,7 +141,8 @@ test('MCP tools: add, duplicate guard, steps, update, isolation, scope-limited t
     // a read-only grant shows no write tools
     const r = await connect(base, { uid: 'u_j', scope: 'wbs.read', clientName: 'Gemini' });
     const rc = await mcp(base, r.access_token);
-    assert.ok(!(await rc.listTools()).tools.some(x => x.name === 'wbs_add')); await rc.close();
+    const ro = (await rc.listTools()).tools.map(x => x.name);
+    assert.ok(!ro.includes('wbs_add') && !ro.includes('wbs_inbox_add') && !ro.includes('wbs_inbox_mark') && ro.includes('wbs_inbox_list')); await rc.close();
   } finally { await close(); }
 });
 

@@ -1,6 +1,6 @@
 // In-memory store for tests and local runs. Same contract as the Firestore store, including single-use semantics and
 // per-user transactions (a promise chain per uid serialises them, as Firestore's transactions would).
-import type { AuthCode, AuthRequest, LedgerEvent, LedgerTx, OAuthClient, RefreshRecord, Row, RowFilter, Store } from './types.js';
+import type { AuthCode, AuthRequest, InboxItem, LedgerEvent, LedgerTx, OAuthClient, RefreshRecord, Row, RowFilter, Store } from './types.js';
 
 const key = (year: string, code: string) => `${year}|${code}`;
 
@@ -69,11 +69,27 @@ export class MemoryStore implements Store {
   }
   async revokeFamily(family: string) { for (const [h, r] of this.refresh) if (r.family === family) this.refresh.delete(h); }
 
+  private boxes = new Map<string, Map<string, InboxItem>>();
+  private box(uid: string) { let b = this.boxes.get(uid); if (!b) { b = new Map(); this.boxes.set(uid, b); } return b; }
+  async putInbox(uid: string, items: InboxItem[]) {
+    const b = this.box(uid); let added = 0;
+    for (const it of items) if (!b.has(it.id)) { b.set(it.id, { ...it }); added++; }
+    return { added, existing: items.length - added };
+  }
+  async inbox(uid: string, f?: { status?: InboxItem['status']; limit?: number }) {
+    return [...this.box(uid).values()].filter(i => !f?.status || i.status === f.status).sort((a, b) => b.added - a.added).slice(0, f?.limit ?? 50).map(i => ({ ...i }));
+  }
+  async markInbox(uid: string, ids: string[], status: 'merged' | 'skipped', ref = '') {
+    const b = this.box(uid); let n = 0;
+    for (const id of ids) { const i = b.get(id); if (i) { i.status = status; i.ref = ref; n++; } }
+    return n;
+  }
+
   private secrets = new Map<string, unknown>();
   async putSecret(uid: string, name: string, value: unknown) { this.secrets.set(`${uid}|${name}`, structuredClone(value)); }
   async secret<T>(uid: string, name: string) { const v = this.secrets.get(`${uid}|${name}`); return v === undefined ? null : structuredClone(v) as T; }
   async deleteAccount(uid: string) {
-    this.ledgers.delete(uid);
+    this.ledgers.delete(uid); this.boxes.delete(uid);
     for (const k of [...this.secrets.keys()]) if (k.startsWith(uid + '|')) this.secrets.delete(k);
     for (const [h, r] of this.refresh) if (r.uid === uid) this.refresh.delete(h);
   }

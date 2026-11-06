@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_name__",
+  "short_name": "PP WBS",
+  "description": "__MSG_description__",
+  "version": "0.1.0",
+  "default_locale": "en",
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": { "default_popup": "popup.html", "default_title": "PP WBS" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "options_page": "options.html",
+  "permissions": ["identity", "storage", "activeTab", "scripting", "alarms", "contextMenus"],
+  "optional_host_permissions": ["https://*/*"],
+  "commands": {
+    "send-chat": { "suggested_key": { "default": "Alt+Shift+W" }, "description": "__MSG_cmdSend__" }
+  },
+  "minimum_chrome_version": "120"
+}
