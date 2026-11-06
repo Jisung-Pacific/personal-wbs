@@ -4,7 +4,7 @@
 
 One ledger of everything you do, across years, kept up to date by Claude agents, with a self-contained HTML dashboard.
 
-_Screenshot placeholder: dashboard board view (docs/screenshot.png)_
+![Board view of the dashboard: the demo with the synthetic sample ledger](docs/screenshot-board.en.png)
 
 ## What it is
 

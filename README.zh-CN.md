@@ -4,7 +4,7 @@
 
 把你多年来做过的所有事情记在同一本台账里，由 Claude 智能体持续更新，并用一个独立的 HTML 仪表盘来查看。
 
-_截图占位：仪表盘看板视图（docs/screenshot.png）_
+![仪表盘看板视图：使用虚构示例台账的演示](docs/screenshot-board.zh-CN.png)
 
 ## 这是什么
 
