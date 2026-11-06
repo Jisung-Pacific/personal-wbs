@@ -164,13 +164,18 @@ say "step 1/4: image registry, KMS key, secrets, image builder — review the pl
 
 say "step 2/4: first image"
 TAG="$IMAGE:bootstrap-$(git rev-parse --short HEAD 2>/dev/null || date +%s)"
-build_in_cloud() {   # Cloud Build under the hub's own builder account (created in step 1)
-  local cfg log i; cfg=$(mktemp --suffix=.json); log=$(mktemp)
-  printf '{"steps":[{"name":"gcr.io/cloud-builders/docker","args":["build","--platform=linux/amd64","-t","%s","."]}],"images":["%s"],"serviceAccount":"projects/%s/serviceAccounts/%s-builder@%s.iam.gserviceaccount.com","options":{"logging":"CLOUD_LOGGING_ONLY"},"timeout":"1200s"}' \
-    "$TAG" "$TAG" "$PROJECT" "$SERVICE" "$PROJECT" > "$cfg"
-  for i in 1 2 3 4 5 6; do   # a builder account created moments ago can take a few minutes to reach Cloud Build
-    if gcloud builds submit . --config="$cfg" --gcs-source-staging-dir="gs://$PROJECT-$SERVICE-build/source" 2>&1 | tee "$log"; then break; fi
-    if [ "$i" -lt 6 ] && grep -q "Unknown service account" "$log"; then echo "builder account not visible to Cloud Build yet ($i/6); retrying in 30s"; sleep 30; continue; fi
+build_in_cloud() {   # a regional Cloud Build under the hub's own builder account (created in step 1)
+  local cfg log i sa="projects/$PROJECT/serviceAccounts/$SERVICE-builder@$PROJECT.iam.gserviceaccount.com"
+  gcloud iam service-accounts describe "$SERVICE-builder@$PROJECT.iam.gserviceaccount.com" --format='value(email)' >/dev/null \
+    || { echo "the builder account is missing: rerun this script (step 1 creates it)"; return 1; }
+  cfg=$(mktemp --suffix=.json); log=$(mktemp)
+  printf '{"steps":[{"name":"gcr.io/cloud-builders/docker","args":["build","--platform=linux/amd64","-t","%s","."]}],"images":["%s"],"serviceAccount":"%s","options":{"logging":"CLOUD_LOGGING_ONLY"},"timeout":"1200s"}' \
+    "$TAG" "$TAG" "$sa" > "$cfg"
+  # regional, as a user-specified account needs: the global endpoint answered "Unknown service account" for this one
+  for i in 1 2 3; do   # a builder account created moments ago can take a minute to reach Cloud Build
+    if gcloud builds submit . --region="$REGION" --config="$cfg" --service-account="$sa" \
+         --gcs-source-staging-dir="gs://$PROJECT-$SERVICE-build/source" 2>&1 | tee "$log"; then break; fi
+    if [ "$i" -lt 3 ] && grep -q "Unknown service account" "$log"; then echo "builder account not visible to Cloud Build yet ($i/3); retrying in 30s"; sleep 30; continue; fi
     rm -f "$cfg" "$log"; return 1
   done
   rm -f "$cfg" "$log"
