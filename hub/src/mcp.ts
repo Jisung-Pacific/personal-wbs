@@ -98,8 +98,10 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       title: 'Open a team space',
       description: 'Everything a team screen shows, in one call: the space and the user\'s role, the charter in force and any open proposal, the members (owners and members only), the plan against the actual work (as wbs_plan), the user\'s own rows shared there, and who read them in the last 30 days. Use it when the user switches to a team or asks how the team is doing.',
       inputSchema: { space: teamSpace }, annotations: ro,
-    }, async a => run(async () => ({ ...(await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space))),
-      ...(opts.hubUrl ? { connector_url: `${opts.hubUrl}/mcp/t/${sp(a.space)}` } : {}) })));
+    }, async a => run(async () => {
+      const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space));   // its address only for those who may connect it
+      return { ...t, ...(opts.hubUrl && t.space.role !== 'guest' ? { connector_url: `${opts.hubUrl}/mcp/t/${t.space.id}` } : {}) };
+    }));
     if (views) server.registerTool('wbs_views', {
       title: 'See who viewed your shared rows',
       description: 'Who read team content carrying the user\'s shared rows: which person (and through which agent) or the team\'s agent, in which team space, how many of the user\'s rows, and when (first and last time each day, how often). Only the user sees this; their own reads are not listed. Days are kept 180 days.',
