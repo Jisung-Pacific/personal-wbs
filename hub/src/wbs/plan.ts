@@ -58,11 +58,11 @@ export const ShareInput = z.object({
   plan: z.string().regex(CODE).describe('The plan item the row serves'),
   plan_year: z.string().regex(YEAR).optional().describe('The plan year; defaults to the row\'s year'),
   share: z.array(z.enum(SHARE_FIELDS)).max(SHARE_FIELDS.length).optional()
-    .describe('Fields the team may see; status is always included. Default (the charter\'s): title, status, start, end, due, last_progress, links. Add blocker, evidence or task (the full text) only when the person chooses'),
+    .describe('Fields the team may see; status is always included. Default (the charter\'s): title, status, start, end, due, last_progress, links. Add goal (the row\'s 목표, set beside the team\'s intents), blocker, evidence or task (the full text) only when the person chooses'),
 });
 export const UnshareInput = z.object({ year: z.string().regex(YEAR), code: z.string().regex(/^\d+(\.\d+)+$/) });
 export const PlanReadInput = z.object({
-  space: z.string(), view: z.enum(['actual', 'items']).optional(), year: z.string().regex(YEAR).optional(),
+  space: z.string(), view: z.enum(['actual', 'items', 'alignment']).optional(), year: z.string().regex(YEAR).optional(),
 });
 
 const byCode = (a: { year: string; code: string }, b: { year: string; code: string }) => a.year.localeCompare(b.year) || codeKey(a.code).localeCompare(codeKey(b.code));
@@ -94,6 +94,17 @@ function project(uid: string, row: Row, link: PlanLink): SharedWork {
   return { id: workId(uid, row.year, row.code), uid, plan: link.plan, fields, at: Date.now() };
 }
 
+/** The intent a plan item serves: its own, else its nearest parent's (within the same plan year); '' for none. */
+function intentOf(items: PlanItem[]) {
+  const byKey = new Map(items.map(p => [planKey(p.year, p.code), p]));
+  return (p: PlanItem | undefined): string => {
+    if (!p) return '';
+    if (p.intent) return p.intent;
+    for (const a of ancestorsOf(p.code).reverse()) { const q = byKey.get(planKey(p.year, a)); if (q?.intent) return q.intent; }
+    return '';
+  };
+}
+
 // ---------------------------------------------------------------- plan vs actual
 export type Flag = 'late' | 'no_work' | 'plan_done_work_open' | 'work_done_plan_open' | 'parked_but_active' | 'waiting';
 const FLAG_KO: Record<Flag, string> = {
@@ -112,9 +123,10 @@ function stateOf(ws: SharedWork[]): string | null {
 }
 
 /** The plan set against the shared work, item by item (work on a child counts for its parents too). `named`: whether the
- *  caller may see who did the work (a guest or the team's agent sees counts only). */
-export function planActual(items: PlanItem[], work: SharedWork[], today: string, named: boolean, year?: string) {
-  const its = items.filter(p => !year || p.year === year).sort(byCode);
+ *  caller may see who did the work (a guest or the team's agent sees counts only). `live`: the active intents, for
+ *  those who may see the intent alignment; each item then carries the intent it serves (own or inherited). */
+export function planActual(items: PlanItem[], work: SharedWork[], today: string, named: boolean, year?: string, live?: Set<string>) {
+  const its = items.filter(p => !year || p.year === year).sort(byCode), eff = intentOf(items);
   const known = new Set(items.map(p => planKey(p.year, p.code)));
   const under = (p: PlanItem) => work.filter(w => { const x = splitPlan(w.plan); return x.year === p.year && (x.code === p.code || x.code.startsWith(p.code + '.')); });
   const rows = its.map(p => {
@@ -134,7 +146,9 @@ export function planActual(items: PlanItem[], work: SharedWork[], today: string,
     if (ws.some(w => w.fields.status === '대기·심사')) flags.push('waiting');
     const direct = ws.filter(w => splitPlan(w.plan).code === p.code).slice(0, 20)   // the rows linked to this item itself
       .map(w => ({ ...w.fields, ...(named ? { uid: w.uid } : {}), ...(w.frozen ? { frozen: true } : {}) }));
+    const intent = live ? (i => live.has(i) ? i : '')(eff(p)) : undefined;
     return { year: p.year, code: p.code, scope: p.scope, deliverable: p.deliverable, done: p.done, depends_on: p.depends_on, owners: p.owners,
+      ...(live ? { intent, intent_inherited: !!intent && p.intent !== intent } : {}),
       plan: { status: p.status, start: p.start, due: p.due }, actual, slip_days: slip, flags, work: direct };
   });
   const unplanned = work.filter(w => !known.has(w.plan)).map(w => ({ plan: w.plan, ...w.fields, ...(named ? { uid: w.uid } : {}) }));
@@ -159,18 +173,15 @@ export type IntentFlag = 'no_plan' | 'no_work' | 'focus_drift';
 const INTENT_FLAG_KO: Record<IntentFlag, string> = { no_plan: '계획 없음', no_work: '작업 없음', focus_drift: '순위보다 작업이 적음' };
 
 /** Each active intent (by rank) with the plan items that serve it (an item without an intent inherits its nearest
- *  parent's) and the shared work under those items: how much, done, by whom, and its share of all shared work. Flags:
- *  an intent with no plan, with plan but no work, or getting at least 20 points less of the work than a lower-ranked
- *  one. Then the plan items that serve no intent and the work on them. `named`: per person, for owners and members. */
+ *  parent's) and the shared work under those items: how much, done, by whom, its share of all shared work, and the
+ *  goals (목표) the people gave their rows, where they shared them — the row's own why beside the team's. Flags: an
+ *  intent with no plan, with plan but no work, or getting at least 20 points less of the work than a lower-ranked one.
+ *  Then the plan items that serve no intent and the work on them (with its titles). `named`: per person, for owners and
+ *  members. */
 export function intentAlignment(items: PlanItem[], intents: Intent[], work: SharedWork[], named: boolean) {
   const active = intents.filter(i => i.status === 'active').sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id)), live = new Set(active.map(i => i.id));
-  const byKey = new Map(items.map(p => [planKey(p.year, p.code), p]));
-  const eff = (p: PlanItem | undefined): string => {
-    if (!p) return '';
-    if (p.intent) return p.intent;
-    for (const a of ancestorsOf(p.code).reverse()) { const q = byKey.get(planKey(p.year, a)); if (q?.intent) return q.intent; }
-    return '';
-  };
+  const byKey = new Map(items.map(p => [planKey(p.year, p.code), p])), eff = intentOf(items);
+  const few = (xs: (string | undefined)[], n = 5) => [...new Set(xs.map(x => (x || '').trim()).filter(Boolean))].slice(0, n).map(x => x.length > 80 ? x.slice(0, 80).trimEnd() + '…' : x);
   const leaves = items.filter(p => !items.some(o => o.year === p.year && o.code.startsWith(p.code + '.')));
   const of = (w: SharedWork) => { const i = eff(byKey.get(w.plan)); return live.has(i) ? i : ''; };
   const total = work.length, pct = (n: number) => total ? Math.round(n / total * 100) : 0;   // whole percents: no float drift in the comparison
@@ -178,14 +189,14 @@ export function intentAlignment(items: PlanItem[], intents: Intent[], work: Shar
     const its = leaves.filter(p => eff(p) === i.id), ws = work.filter(w => of(w) === i.id), people = [...new Set(ws.map(w => w.uid))].sort();
     return { id: i.id, rank: i.rank, why: i.why, what: i.what, how: i.how, items: its.length, items_done: its.filter(p => p.status === '완료').length,
       work: ws.length, work_done: ws.filter(w => w.fields.status === '완료').length, share: pct(ws.length) / 100,
-      people: named ? people : people.length, flags: [] as IntentFlag[] };
+      people: named ? people : people.length, goals: few(ws.map(w => w.fields.goal)), flags: [] as IntentFlag[] };
   });
   rows.forEach((r, k) => {
     if (!r.items) r.flags.push('no_plan'); else if (!r.work) r.flags.push('no_work');
     if (rows.slice(k + 1).some(o => pct(o.work) >= pct(r.work) + 20)) r.flags.push('focus_drift');
   });
   const unanchored = leaves.filter(p => !live.has(eff(p))).sort(byCode).map(p => `${p.year} ${p.code}`);
-  const off = work.filter(w => !of(w)).length;
+  const offWork = work.filter(w => !of(w)), off = offWork.length;
   const byPerson = named ? [...new Set(work.map(w => w.uid))].sort().map(uid => {
     const ws = work.filter(w => w.uid === uid);
     return { uid, rows: ws.length, by_intent: Object.fromEntries(active.map(i => [i.id, ws.filter(w => of(w) === i.id).length])), off_intent: ws.filter(w => !of(w)).length };
@@ -194,7 +205,7 @@ export function intentAlignment(items: PlanItem[], intents: Intent[], work: Shar
     ...rows.map(r => `${r.rank}순위 ${r.why} — 계획 ${r.items}개 · 작업 ${r.work_done}/${r.work}행(${Math.round(r.share * 100)}%) · ${Array.isArray(r.people) ? r.people.length : r.people}명${r.flags.length ? ' | ' + r.flags.map(f => INTENT_FLAG_KO[f]).join(', ') : ''}`),
     ...(unanchored.length || off ? [`의도 없는 계획 ${unanchored.length}개${unanchored.length ? ` (${unanchored.slice(0, 6).map(x => x.split(' ')[1]).join(', ')}${unanchored.length > 6 ? ' …' : ''})` : ''} · 의도 밖 작업 ${off}행`] : []),
   ];
-  return { intents: rows, unanchored, off_intent_work: off, total_work: total, ...(byPerson ? { by_person: byPerson } : {}), lines };
+  return { intents: rows, unanchored, off_intent_work: off, off_intent_titles: few(offWork.map(w => w.fields.title)), total_work: total, ...(byPerson ? { by_person: byPerson } : {}), lines };
 }
 
 // ---------------------------------------------------------------- the service
@@ -216,9 +227,10 @@ export class Plans {
   async actual(caller: Caller, space: string, year?: string) {
     const e = await this.spaces.enter(caller, space, 'plan.read');
     const vis = visibleTo(e.projects);
-    const [items, work] = await Promise.all([this.store.plan(space), this.store.shared(space)]);
+    const [items, work, intents] = await Promise.all([this.store.plan(space), this.store.shared(space), e.relation === 'guest' ? [] : this.store.intents(space)]);
     const seen = work.filter(w => vis(splitPlan(w.plan)));
-    const out = { space, ...planActual(items.filter(vis), seen, todayKst(), e.named, year) };
+    const live = e.relation === 'guest' ? undefined : new Set(intents.filter(i => i.status === 'active').map(i => i.id));
+    const out = { space, ...planActual(items.filter(vis), seen, todayKst(), e.named, year, live) };
     if (this.views) {
       const owners = new Map<string, number>();
       for (const w of seen) if (!year || splitPlan(w.plan).year === year) owners.set(w.uid, (owners.get(w.uid) ?? 0) + 1);

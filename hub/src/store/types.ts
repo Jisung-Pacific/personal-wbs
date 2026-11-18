@@ -41,8 +41,9 @@ export interface Intent {
 /** The fields of a personal row a person may share with a team, field by field. `title` is the task text up to its
  *  first ':' or ';' (or its first 50 characters) and `links` the http(s) links in the row (its deliverables); the rest
  *  are the row's own columns. The team charter's default: title, status, dates and deliverable links; blocker details,
- *  evidence and the full task text only when the person chooses. */
-export const SHARE_FIELDS = ['title', 'status', 'start', 'end', 'due', 'last_progress', 'links', 'size', 'key_result', 'blocker', 'evidence', 'task'] as const;
+ *  the row's goal (목표, which the intent alignment sets beside the team's intents), evidence and the full task text only
+ *  when the person chooses. */
+export const SHARE_FIELDS = ['title', 'status', 'start', 'end', 'due', 'last_progress', 'links', 'size', 'key_result', 'blocker', 'goal', 'evidence', 'task'] as const;
 export type ShareField = typeof SHARE_FIELDS[number];
 /** A personal row's reference to a team plan item, kept in the person's own space: which plan item it serves and which
  *  of its fields the team may see. One row serves one plan item. */

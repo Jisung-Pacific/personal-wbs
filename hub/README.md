@@ -56,8 +56,8 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
 - **Team plan and shared work**: a team space keeps a plan, its project WBS (scope, deliverable, done criterion,
   prerequisites, owners and planned dates under codes of its own, permanent and parked rather than deleted), sealed under
   the space's key. Work stays in each person's own ledger: a person links a row to a plan item and chooses the fields the
-  team sees, by default title, status, dates and deliverable links, with blocker details, evidence and the full text only
-  when they choose. The hub copies just those fields into the space under an id that does not reveal the person's own
+  team sees, by default title, status, dates and deliverable links, with blocker details, the row's goal, evidence and
+  the full text only when they choose. The hub copies just those fields into the space under an id that does not reveal the person's own
   code and keeps the copy in step with the row; unlinking withdraws it, and leaving the space or becoming a guest freezes
   it with the team, as the charter says. `wbs_plan` (REST `GET /v1/plan`) shows the plan against that work: per item the
   linked rows (rolled up to parents), how many are done, their state and dates, days late against the due date, and
@@ -67,10 +67,11 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   ranked, retired rather than deleted (`wbs_plan_put` with `intents`) — and plan items point at the intent they serve;
   a child inherits its parent's. `wbs_plan` with `view: "alignment"` (REST `GET /v1/plan?view=alignment`) sets each
   intent against the shared work under its items: plan items and work rows (done of all), its share of the team's work,
-  who worked on it, and flags for an intent with no plan, a plan but no work, or at least 20 points less of the work than
-  a lower-ranked intent; then the plan items that serve no intent and the work on them, and per person (owners and
-  members see each other's, as the charter says; the team's agent sees counts; guests do not see it). A team space's
-  `wbs_brief` and `wbs_team` carry it too.
+  who worked on it, the goals (목표) people gave those rows where they shared them, and flags for an intent with no plan,
+  a plan but no work, or at least 20 points less of the work than a lower-ranked intent; then the plan items that serve
+  no intent and the work on them, and per person (owners and members see each other's, as the charter says; the team's
+  agent sees counts; guests do not see it). Plan against actual names each item's intent, own or inherited. A team
+  space's `wbs_brief` and `wbs_team` carry the alignment too.
 - **View log**: who read a person's shared rows is noted in that person's own space (the charter: views are visible to
   the one viewed) — the reader's account and role, the agent it read through or the team's own agent, the space, how
   many of the person's rows one read carried, and when (first and last time each day, how often). Only the person reads

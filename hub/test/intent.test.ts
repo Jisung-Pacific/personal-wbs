@@ -73,11 +73,11 @@ test('alignment model: inheritance, leaves, shares in whole percents, the three 
   const item = (code: string, intent?: string, status: PlanItem['status'] = '진행 중'): PlanItem =>
     ({ year: Y, code, scope: code, deliverable: '', done: '', depends_on: [], owners: [], status, start: '', due: '', updated: 0, by: 'u_a', log: [], ...(intent !== undefined ? { intent } : {}) });
   let n = 0;
-  const w = (uid: string, plan: string, status = '진행 중'): SharedWork => ({ id: `w${n++}`, uid, plan: `${Y}:${plan}`, fields: { status, title: 't' }, at: 0 });
+  const w = (uid: string, plan: string, status = '진행 중', goal?: string): SharedWork => ({ id: `w${n++}`, uid, plan: `${Y}:${plan}`, fields: { status, title: `t${plan}`, ...(goal ? { goal } : {}) }, at: 0 });
   const rep = (k: number, f: () => SharedWork) => Array.from({ length: k }, f);
   const items = [item('1', 'i1'), item('1.1'), item('1.2', undefined, '완료'), item('2', 'i2'), item('2.1'), item('3', 'i3'), item('3.1'), item('4'), item('4.1'), item('5', 'i4'), item('5.1')];
   // 10 rows: i1 gets 2 (1 done), i2 gets 0, i3 gets 6, the unanchored 4.1 gets 1, the retired i4's 5.1 gets 1
-  const work = [w('u_a', '1.1', '완료'), w('u_b', '1.2'), ...Array.from({ length: 6 }, (_, k) => w(k % 2 ? 'u_a' : 'u_b', '3.1')), w('u_b', '4.1'), w('u_a', '5.1')];
+  const work = [w('u_a', '1.1', '완료'), w('u_b', '1.2'), ...Array.from({ length: 6 }, (_, k) => w(k % 2 ? 'u_a' : 'u_b', '3.1', '진행 중', k < 3 ? '응답 시간 단축' : undefined)), w('u_b', '4.1'), w('u_a', '5.1')];
   assert.equal(work.length, 10);
   const a = intentAlignment(items, [it('i3', 3), it('i1', 1), it('i2', 2), it('i4', 4, 'retired'), it('i5', 5)], work, true);
   assert.deepEqual(a.intents.map(r => [r.id, r.items, r.items_done, r.work, r.work_done, r.share, r.flags]), [
@@ -88,6 +88,8 @@ test('alignment model: inheritance, leaves, shares in whole percents, the three 
   ]);
   assert.deepEqual(a.unanchored, [`${Y} 4.1`, `${Y} 5.1`], 'no intent, or a retired one');
   assert.equal(a.off_intent_work, 2); assert.equal(a.total_work, 10);
+  assert.deepEqual(a.off_intent_titles, ['t4.1', 't5.1'], 'what the off-intent work is');
+  assert.deepEqual([a.intents[2].goals, a.intents[0].goals], [['응답 시간 단축'], []], 'the goals people shared, once each');
   assert.deepEqual(a.intents[2].people, ['u_a', 'u_b']);
   assert.deepEqual(a.by_person, [{ uid: 'u_a', rows: 5, by_intent: { i1: 1, i2: 0, i3: 3, i5: 0 }, off_intent: 1 }, { uid: 'u_b', rows: 5, by_intent: { i1: 1, i2: 0, i3: 3, i5: 0 }, off_intent: 1 }]);
   assert.equal(a.lines[0], '1순위 의도i1 — 계획 2개 · 작업 1/2행(20%) · 2명 | 순위보다 작업이 적음');
@@ -107,14 +109,19 @@ test('alignment through the service: shared work counts under its plan item; own
   await plans.put(A, id, { intents: [{ why: '두 사람이 같은 원장으로 일한다' }, { why: '마감을 놓치지 않는다' }] });
   await plans.put(A, id, { items: [{ code: '1', scope: '팀 공간', intent: 'i1' }, { code: '1.1', scope: '공간 모델' }, { code: '2', scope: '일정', intent: 'i2' }, { code: '2.1', scope: '주간 점검' }, { code: '3', scope: '기타' }] });
   const a1 = (await ledger.add({ uid: 'u_a', clientName: 'Claude' }, row('공간 모델 구현'))).created;
-  const b1 = (await ledger.add({ uid: 'u_b', clientName: 'ChatGPT' }, row('권한 표 정리'))).created;
+  const b1 = (await ledger.add({ uid: 'u_b', clientName: 'ChatGPT' }, row('권한 표 정리', { goal: '팀원이 자기 행만 고쳐 쓰게' }))).created;
   const b2 = (await ledger.add({ uid: 'u_b', clientName: 'ChatGPT' }, row('잡무 정리'))).created;
   await plans.share(A, { year: a1.year, code: a1.code, space: id, plan: '1.1' });
-  await plans.share(B, { year: b1.year, code: b1.code, space: id, plan: '1.1' });
+  await plans.share(B, { year: b1.year, code: b1.code, space: id, plan: '1.1', share: ['title', 'status', 'goal'] });
   await plans.share(B, { year: b2.year, code: b2.code, space: id, plan: '3' });
   const m = await plans.align(B, id);
   assert.deepEqual(m.intents.map(r => [r.id, r.work, r.share, r.people, r.flags]), [['i1', 2, 0.67, ['u_a', 'u_b'], []], ['i2', 0, 0, [], ['no_work']]]);
-  assert.deepEqual(m.unanchored, [`${Y} 3`]); assert.equal(m.off_intent_work, 1);
+  assert.deepEqual(m.intents[0].goals, ['팀원이 자기 행만 고쳐 쓰게'], 'a goal reaches the team only where its person shared it');
+  assert.deepEqual(m.unanchored, [`${Y} 3`]); assert.equal(m.off_intent_work, 1); assert.deepEqual(m.off_intent_titles, ['잡무 정리']);
+  // plan vs actual carries each item's intent, own or inherited, for those who may see the alignment
+  const pv = await plans.actual(B, id);
+  assert.deepEqual(pv.items.map(p => [p.code, p.intent, p.intent_inherited]), [['1', 'i1', false], ['1.1', 'i1', true], ['2', 'i2', false], ['2.1', 'i2', true], ['3', '', false]]);
+  assert.ok((await plans.actual(G, id)).items.every(p => !('intent' in p)), 'not for guests');
   assert.deepEqual(m.by_person!.map(p => [p.uid, p.rows, p.off_intent]), [['u_a', 1, 0], ['u_b', 2, 1]]);
   const g = await plans.align(agent('u_a', 'Claude', ['wbs.read']), id);
   assert.ok(Array.isArray(g.intents[0].people), 'an agent acting for a member sees what the member sees');

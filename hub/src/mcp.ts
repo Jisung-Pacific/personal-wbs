@@ -143,7 +143,7 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
     }, async ({ space: s, ...a }) => run(() => plans.put(caller, s, a)));
     if (plans) server.registerTool('wbs_share', {
       title: 'Share a row of yours with a team plan',
-      description: 'Link one row of the user\'s own ledger to a team plan item and choose which of its fields the team sees (status always; default status, start, end, last_progress; add task only when the user wants the text shared). The team\'s copy follows the row from then on. stop: true withdraws it. Work is recorded in the personal ledger first (wbs_add), then shared.',
+      description: 'Link one row of the user\'s own ledger to a team plan item and choose which of its fields the team sees (status always; default title, status, start, end, due, last_progress, links; add goal, blocker, evidence or task only when the user wants them shared). The team\'s copy follows the row from then on. stop: true withdraws it. Work is recorded in the personal ledger first (wbs_add), then shared.',
       inputSchema: { ...ShareInput.partial({ space: true, plan: true }).shape, stop: z.boolean().optional().describe('Withdraw the row from the team') },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ stop, ...a }) => run(() => stop ? plans.unshare(caller, a) : plans.share(caller, a as never)));
