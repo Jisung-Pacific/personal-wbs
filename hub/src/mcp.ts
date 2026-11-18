@@ -8,6 +8,7 @@ import { InboxAddInput, InboxListInput, InboxMarkInput, type Inbox } from './wbs
 import { agent } from './wbs/access.js';
 import type { Spaces } from './wbs/spaces.js';
 import { PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
+import { ViewsInput, type Views } from './wbs/views.js';
 
 export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every year of their work as atomic rows (one concrete deliverable, decision or event per row, dated from its source), shared by every agent they use.
 - Before adding, search (wbs_search) for the same work; extend an existing task with a dated step (wbs_add with parent) or a status change (wbs_update) instead of a near-duplicate row.
@@ -18,7 +19,7 @@ export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every ye
 - Planning, advising or reviewing: call wbs_brief first and drill down only where it points (wbs_search, wbs_get); do not page through the ledger.
 - Record work silently in the background when the user finishes something concrete; mention it only if they ask.
 - The inbox holds raw material captured where no agent could write (chats on other AI sites, searches, notes). When asked to process it, read wbs_inbox_list, turn what is concrete work into rows with the rules above, and mark every item merged (with the codes) or skipped.
-- A team space has a plan (its project WBS): read it against the actual work with wbs_plan, write it with wbs_plan_put. Record a person's own work in their personal ledger and link it to a plan item with wbs_share; only the fields they choose reach the team.
+- A team space has a plan (its project WBS): read it against the actual work with wbs_plan, write it with wbs_plan_put. Record a person's own work in their personal ledger and link it to a plan item with wbs_share; only the fields they choose reach the team, and wbs_views shows the person who read them.
 - Every tool works on the user's personal ledger unless you pass space: a team space id from wbs_spaces, for the team's plan and work. Write personal work to the personal ledger and team plan items to the team space. A guest sees only its assigned projects; people, not agents, manage a space's members. A team space opens to a member once they have agreed to its charter (wbs_charter); agreeing and proposing changes are for the user to do, so tell them when a proposal waits for their answer.`;
 
 const ok = (v: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(v) }] });
@@ -29,7 +30,7 @@ const fail = (e: unknown) => {
 };
 const run = async (f: () => Promise<unknown>) => { try { return ok(await f()); } catch (e) { return fail(e); } };
 
-export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans): McpServer {
+export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans, views?: Views): McpServer {
   const server = new McpServer({ name: 'ppwbs-hub', title: 'PP WBS Hub', version }, { instructions: INSTRUCTIONS });
   const read = scopes.includes('wbs.read'), write = scopes.includes('wbs.write');
   const ro = { readOnlyHint: true, openWorldHint: false } as const;
@@ -67,6 +68,11 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'Your rows that are linked to team plan items: which plan item each serves, which fields the team sees, and whether the team still receives them.',
       inputSchema: {}, annotations: ro,
     }, async () => run(() => plans.mine(caller)));
+    if (views) server.registerTool('wbs_views', {
+      title: 'See who viewed your shared rows',
+      description: 'Who read team content carrying the user\'s shared rows: which person (and through which agent) or the team\'s agent, in which team space, how many of the user\'s rows, and when (first and last time each day, how often). Only the user sees this; their own reads are not listed. Days are kept 180 days.',
+      inputSchema: ViewsInput.shape, annotations: ro,
+    }, async a => run(() => views.mine(caller, a)));
 
     server.registerTool('wbs_get', {
       title: 'Open one ledger row',

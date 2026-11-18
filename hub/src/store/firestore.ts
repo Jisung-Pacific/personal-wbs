@@ -15,6 +15,7 @@
 //   spaces/{id}/plan/{year}_{code}     one item of the team plan: {year, code, enc} — scope, deliverable, owners, dates sealed
 //   spaces/{id}/shared/{workId}        the shared fields of one member's linked row: {uid, frozen?, enc} — plan code and fields sealed
 //   users/{uid}/links/{year}_{code}    a personal row's link to a team plan item: {year, code, enc} — space, plan, fields sealed
+//   users/{uid}/views/{YYYY-MM-DD}     who read the person's shared rows that day: {date, expire, enc} — the entries sealed
 // year and code stay readable so queries can select a year or a task, and memberships (uid, role) so access can be
 // checked; everything else is ciphertext.
 //   oauth_clients/{sha256(client_id)}  registered or metadata-document clients
@@ -25,8 +26,9 @@ import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-ad
 import {
   isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
   type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
+  type ViewEntry,
 } from './types.js';
-import { matches } from './memory.js';
+import { matches, mergeViews } from './memory.js';
 import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from '../crypto/envelope.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -308,6 +310,22 @@ export class FirestoreStore implements Store {
     const s = await this.sharedCol(id).where('uid', '==', uid).get(), live = s.docs.filter(d => !d.get('frozen'));
     const b = this.db.batch(); live.forEach(d => b.update(d.ref, { frozen: at })); await b.commit();
     return live.length;
+  }
+
+  private viewsCol(uid: string) { return home(this.db, uid).collection('views'); }
+  async logViews(uid: string, date: string, entries: ViewEntry[], keepUntil: number) {
+    await this.envelope.dek(uid);   // KMS outside the retryable transaction; sealing inside is local
+    const ref = this.viewsCol(uid).doc(date);
+    await this.db.runTransaction(async t => {
+      const d = await t.get(ref);
+      const cur = d.exists ? await this.envelope.open<Record<string, ViewEntry>>(uid, `views/${date}`, d.get('enc') as Sealed) : {};
+      t.set(ref, { date, expire: expire(keepUntil), enc: await this.envelope.seal(uid, `views/${date}`, mergeViews(cur, entries)) });
+    });
+  }
+  async views(uid: string, since: string) {
+    const s = await this.viewsCol(uid).where('date', '>=', since).get();
+    return Promise.all(s.docs.map(async d => ({ date: d.id,
+      entries: Object.values(await this.envelope.open<Record<string, ViewEntry>>(uid, `views/${d.id}`, d.get('enc') as Sealed)) })));
   }
 
   /** Shred first (the team ledger becomes unreadable at once), then drop the members' entries and the documents. */

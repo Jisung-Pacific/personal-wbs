@@ -2,8 +2,18 @@
 // per-user transactions (a promise chain per uid serialises them, as Firestore's transactions would).
 import {
   spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
-  type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store,
+  type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store, type ViewEntry,
 } from './types.js';
+
+/** The key a view log merges on, and the merge itself (shared with the Firestore store). */
+export const viewKey = (e: ViewEntry) => [e.viewer, e.kind, e.client, e.space, e.what].join('|');
+export function mergeViews(into: Record<string, ViewEntry>, add: ViewEntry[]) {
+  for (const e of add) {
+    const k = viewKey(e), o = into[k];
+    into[k] = o ? { ...o, role: e.role, count: o.count + e.count, rows: Math.max(o.rows, e.rows), first: Math.min(o.first, e.first), last: Math.max(o.last, e.last) } : { ...e };
+  }
+  return into;
+}
 
 const key = (year: string, code: string) => `${year}|${code}`;
 
@@ -97,7 +107,7 @@ export class MemoryStore implements Store {
   }
   /** Everything kept under one ledger owner: its rows and history, inbox, secrets and (for an account) its plan links. */
   private dropOwner(owner: string) {
-    this.ledgers.delete(owner); this.boxes.delete(owner); this.linkOf.delete(owner);
+    this.ledgers.delete(owner); this.boxes.delete(owner); this.linkOf.delete(owner); this.viewLog.delete(owner);
     for (const k of [...this.secrets.keys()]) if (k.startsWith(owner + '|')) this.secrets.delete(k);
   }
 
@@ -159,6 +169,14 @@ export class MemoryStore implements Store {
     m.set(w.id, structuredClone(w));
   }
   async removeShared(id: string, workId: string) { this.sharedOf.get(id)?.delete(workId); }
+  private viewLog = new Map<string, Map<string, Record<string, ViewEntry>>>();
+  async logViews(uid: string, date: string, entries: ViewEntry[], _keepUntil?: number) {   // no expiry in memory
+    let m = this.viewLog.get(uid); if (!m) { m = new Map(); this.viewLog.set(uid, m); }
+    m.set(date, mergeViews(m.get(date) ?? {}, entries));
+  }
+  async views(uid: string, since: string) {
+    return [...(this.viewLog.get(uid) ?? [])].filter(([d]) => d >= since).map(([date, e]) => ({ date, entries: Object.values(e).map(x => ({ ...x })) }));
+  }
   async freezeSharedBy(id: string, uid: string, at: number) {
     let n = 0;
     for (const w of this.sharedOf.get(id)?.values() ?? []) if (w.uid === uid && !w.frozen) { w.frozen = at; n++; }

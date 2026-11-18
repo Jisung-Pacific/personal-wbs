@@ -56,7 +56,8 @@ test('Firestore store: a team space keeps its ledger, key and members apart; del
 
 test('Firestore store: the team plan, links and shared copies are sealed, freeze on leaving and go with the space', { skip: !on }, async () => {
   const { Spaces } = await import('../src/wbs/spaces.js'), { Plans } = await import('../src/wbs/plan.js'), { person } = await import('../src/wbs/access.js');
-  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store), plans = new Plans(store, spaces);
+  const { Views } = await import('../src/wbs/views.js');
+  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views);
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys)), a = 'u_a' + Date.now(), b = 'u_b' + Date.now();
   const s = await spaces.create(person(a), '계획 시험');
   await spaces.setMember(person(a), s.id, b, 'member');
@@ -67,6 +68,9 @@ test('Firestore store: the team plan, links and shared copies are sealed, freeze
   await ledger.update({ uid: b, clientName: 'Claude' }, { year: r.year, code: r.code, status: '완료' });
   const v = await plans.actual(person(a), s.id, '2026');
   assert.deepEqual([v.items[1].actual.rows, v.items[1].actual.status], [1, '완료']);
+  await plans.actual(person(a), s.id, '2026');   // a second read merges into the same day's sealed log entry
+  const seen = (await views.mine(person(b))).log[0].entries[0];
+  assert.deepEqual([seen.viewer, seen.count, seen.rows], [a, 2, 1]);
   assert.equal((await store.links(b)).length, 1);
   await spaces.removeMember(person(b), s.id, b);
   assert.ok((await store.shared(s.id))[0].frozen, 'the copy stays with the team, frozen');

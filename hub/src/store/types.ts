@@ -45,6 +45,15 @@ export interface PlanLink { year: string; code: string; space: string; plan: str
  *  with the team as it was (the charter: the shared copies remain with the team) and no longer follows the row. */
 export interface SharedWork { id: string; uid: string; plan: string; fields: Partial<Record<ShareField, string>>; at: number; frozen?: number }
 
+/** One line of a person's view log (execution WBS 3.5): someone else read team content carrying that person's shared
+ *  rows (or, later, cards) on one day. Merged per reader, agent, space and kind: `count` reads, `rows` the most of the
+ *  person's rows one read carried, `first` and `last` when. `viewer` is the reading account ('' for the team's agent),
+ *  `client` the agent it read through ('' for a person in a first-party session), `role` its relation to the space. */
+export interface ViewEntry {
+  viewer: string; kind: 'person' | 'agent' | 'team_agent'; client: string; role: string; space: string; what: 'work' | 'card';
+  rows: number; count: number; first: number; last: number;
+}
+
 /** `projects`: for a guest, the projects (packages, as "YYYY:<code>", e.g. "2026:4.3") whose plan and work it may read. */
 export interface Membership { uid: string; role: SpaceRole; since: number; by: string; projects?: string[] }
 
@@ -174,4 +183,10 @@ export interface Store {
   /** Freezes everything one person shares with a space (on leaving it or becoming a guest): the copies stay and stop
    *  following their rows. Returns how many. */
   freezeSharedBy(id: string, uid: string, at: number): Promise<number>;
+  // the view log (execution WBS 3.5), in the viewed person's own space, one document per day
+  /** Merges entries into the person's log for `date` (same reader, kind, agent, space and what: counts add up, first and
+   *  last widen, rows keep the most). `keepUntil`: when the day may be dropped (Firestore TTL). */
+  logViews(uid: string, date: string, entries: ViewEntry[], keepUntil: number): Promise<void>;
+  /** The person's log from `since` (YYYY-MM-DD) on, by day. */
+  views(uid: string, since: string): Promise<{ date: string; entries: ViewEntry[] }[]>;
 }

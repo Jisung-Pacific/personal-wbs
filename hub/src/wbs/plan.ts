@@ -19,6 +19,7 @@ import { DATE_RE, STATUSES, codeKey, todayKst } from './model.js';
 import { LedgerError } from './service.js';
 import { callerUid, type Caller } from './access.js';
 import type { Spaces } from './spaces.js';
+import type { Views } from './views.js';
 
 const CODE = /^\d+(\.\d+){0,3}$/;
 const YEAR = /^\d{4}$/;
@@ -145,7 +146,7 @@ export function planActual(items: PlanItem[], work: SharedWork[], today: string,
 
 // ---------------------------------------------------------------- the service
 export class Plans {
-  constructor(private store: Store, private spaces: Spaces) {
+  constructor(private store: Store, private spaces: Spaces, private views?: Views) {
     spaces.left = (space, uid) => this.dropShared(space, uid);
   }
 
@@ -157,12 +158,20 @@ export class Plans {
     return { space, items: items.map(p => ({ ...p, by: e.named ? p.by : undefined, log: p.log.map(l => ({ at: l.at, change: l.change, ...(e.named ? { by: l.by, via: l.via } : {}) })) })) };
   }
 
-  /** Plan vs actual for the space (see planActual). */
+  /** Plan vs actual for the space (see planActual). The read is noted in the view log of every other person whose
+   *  rows it carried (views.ts, execution WBS 3.5). */
   async actual(caller: Caller, space: string, year?: string) {
     const e = await this.spaces.enter(caller, space, 'plan.read');
     const vis = visibleTo(e.projects);
     const [items, work] = await Promise.all([this.store.plan(space), this.store.shared(space)]);
-    return { space, ...planActual(items.filter(vis), work.filter(w => vis(splitPlan(w.plan))), todayKst(), e.named, year) };
+    const seen = work.filter(w => vis(splitPlan(w.plan)));
+    const out = { space, ...planActual(items.filter(vis), seen, todayKst(), e.named, year) };
+    if (this.views) {
+      const owners = new Map<string, number>();
+      for (const w of seen) if (!year || splitPlan(w.plan).year === year) owners.set(w.uid, (owners.get(w.uid) ?? 0) + 1);
+      await this.views.saw(caller, e.relation, space, owners, 'work');
+    }
+    return out;
   }
 
   /** Owners and members add plan items or change them; only the fields given change. Parents come before children
