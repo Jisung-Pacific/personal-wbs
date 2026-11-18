@@ -17,7 +17,7 @@ export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every ye
 - Planning, advising or reviewing: call wbs_brief first and drill down only where it points (wbs_search, wbs_get); do not page through the ledger.
 - Record work silently in the background when the user finishes something concrete; mention it only if they ask.
 - The inbox holds raw material captured where no agent could write (chats on other AI sites, searches, notes). When asked to process it, read wbs_inbox_list, turn what is concrete work into rows with the rules above, and mark every item merged (with the codes) or skipped.
-- Every tool works on the user's personal ledger unless you pass space: a team space id from wbs_spaces, for the team's plan and work. Write personal work to the personal ledger and team plan items to the team space. A guest sees only its assigned projects; people, not agents, manage a space's members.`;
+- Every tool works on the user's personal ledger unless you pass space: a team space id from wbs_spaces, for the team's plan and work. Write personal work to the personal ledger and team plan items to the team space. A guest sees only its assigned projects; people, not agents, manage a space's members. A team space opens to a member once they have agreed to its charter (wbs_charter); agreeing and proposing changes are for the user to do, so tell them when a proposal waits for their answer.`;
 
 const ok = (v: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(v) }] });
 const fail = (e: unknown) => {
@@ -48,6 +48,12 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'The personal space and every team space the user belongs to, with the user\'s role (owner, member, guest; a guest also gets its projects). Pass a team space id as `space` to the other tools to work in that team\'s plan.',
       inputSchema: {}, annotations: ro,
     }, async () => run(() => spaces.list(caller)));
+
+    server.registerTool('wbs_charter', {
+      title: 'Read a team space\'s charter',
+      description: 'The charter of a team space (at most 9 lines): the version in force, an open proposal with who has agreed and who still has to answer, and every version so far. A member enters the space only after agreeing to the version in force; agreeing and proposing are done by the user, not by agents.',
+      inputSchema: { space: z.string().describe('A team space id from wbs_spaces') }, annotations: ro,
+    }, async a => run(() => spaces.charter(caller, a.space)));
 
     server.registerTool('wbs_get', {
       title: 'Open one ledger row',

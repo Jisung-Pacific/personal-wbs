@@ -10,6 +10,7 @@
 //   spaces/{id}                        a team space: {owner, created, enc} — its name is sealed under the space's own key
 //   spaces/{id}/members/{uid}          {role, since, by, projects?} — a guest's projects as "YYYY:<package code>"
 //   spaces/{id}/keys/dek               the space's data key, wrapped like an account's; deleting it shreds the space
+//   spaces/{id}/charter/{version}      {status, by, at, activeAt?, closedAt?, consents: {uid: {agree, at}}, enc} — lines and note sealed
 //   spaces/{id}/rows|events|inbox|secrets   the team ledger, laid out and sealed exactly like a personal one
 // year and code stay readable so queries can select a year or a task, and memberships (uid, role) so access can be
 // checked; everything else is ciphertext.
@@ -19,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import {
-  isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
+  isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
   type OAuthClient, type RefreshRecord, type Row, type RowFilter, type SpaceRecord, type SpaceRole, type Store,
 } from './types.js';
 import { matches } from './memory.js';
@@ -227,6 +228,33 @@ export class FirestoreStore implements Store {
       if (prev !== uid) { t.update(this.memberDoc(id, prev), { role: 'member' }); t.set(this.indexDoc(prev, id), { role: 'member' }, { merge: true }); }
     });
   }
+  private charterCol(id: string) { return this.spaceDoc(id).collection('charter'); }
+  private async openCharter(id: string, d: Record<string, unknown>): Promise<CharterVersion> {
+    const v = Number(d.version), body = await this.envelope.open<{ lines: string[]; note: string }>(spaceOwner(id), `charter/${v}`, d.enc as Sealed);
+    return { version: v, lines: body.lines, note: body.note, by: d.by as string, at: d.at as number, status: d.status as CharterVersion['status'],
+      ...(d.activeAt ? { activeAt: d.activeAt as number } : {}), ...(d.closedAt ? { closedAt: d.closedAt as number } : {}),
+      consents: (d.consents || {}) as CharterVersion['consents'] };
+  }
+  private async sealCharter(id: string, c: CharterVersion) {
+    const { lines, note, ...meta } = c;
+    return { ...meta, enc: await this.envelope.seal(spaceOwner(id), `charter/${c.version}`, { lines, note }) };
+  }
+  async charters(id: string) {
+    const s = await this.charterCol(id).get();
+    return (await Promise.all(s.docs.map(d => this.openCharter(id, d.data())))).sort((a, b) => a.version - b.version);
+  }
+  async charterTx<T>(id: string, fn: (versions: CharterVersion[]) => Promise<{ put: CharterVersion[]; out: T }>): Promise<T> {
+    await this.envelope.dek(spaceOwner(id));   // KMS outside the retryable transaction; sealing inside is local
+    return this.db.runTransaction(async t => {
+      const s = await t.get(this.charterCol(id));
+      const all = (await Promise.all(s.docs.map(d => this.openCharter(id, d.data())))).sort((a, b) => a.version - b.version);
+      const { put, out } = await fn(all);
+      const sealed = await Promise.all(put.map(c => this.sealCharter(id, c)));
+      sealed.forEach(d => t.set(this.charterCol(id).doc(String(d.version)), d));
+      return out;
+    });
+  }
+
   /** Shred first (the team ledger becomes unreadable at once), then drop the members' entries and the documents. */
   async deleteSpace(id: string) {
     const ms = await this.members(id);

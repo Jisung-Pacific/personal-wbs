@@ -17,6 +17,11 @@ const task = (t: string, pkg = '4.3 서비스 개발', area = '4 창업·제품'
 const claude = (uid: string) => ({ uid, clientName: 'Claude' });
 const bot = (uid: string, scopes = ['wbs.read', 'wbs.write']) => agent(uid, 'Claude', scopes);
 const A = person('u_a'), B = person('u_b'), G = person('u_g'), X = person('u_x');
+/** Opens a team space: the owner proposes a charter and every listed member agrees (the charter gate, charter.test.ts). */
+async function open(spaces: Spaces, owner: Caller, id: string, ...members: Caller[]) {
+  await spaces.proposeCharter(owner, id, ['팀 작업은 기본 공개다.', '에이전트는 제안하고 사람은 승인한다.']);
+  for (const m of members) await spaces.consentCharter(m, id, 1, true);
+}
 
 test('team space: members write, a guest reads only its projects, outsiders see nothing; personal ledgers untouched', async () => {
   const store = new MemoryStore(), ledger = new Ledger(store), spaces = new Spaces(store);
@@ -27,6 +32,7 @@ test('team space: members write, a guest reads only its projects, outsiders see 
   assert.match(s.id, /^s_[A-Za-z0-9_-]{22}$/); assert.equal(s.name, '연구실 시범');
   await spaces.setMember(A, s.id, 'u_b', 'member');
   await spaces.setMember(A, s.id, 'u_g', 'guest', ['2026:4.3']);
+  await open(spaces, A, s.id, B);
 
   // a member's agent writes the team plan in two projects
   const w = (await spaces.view(bot('u_b'), s.id, 'write')).owner;
@@ -56,7 +62,7 @@ test('team space: members write, a guest reads only its projects, outsiders see 
   // the switcher's list, and who may see the member list
   assert.deepEqual(await spaces.list(G), [
     { id: PERSONAL, kind: 'personal', name: '', role: 'owner' },
-    { id: s.id, kind: 'team', name: '연구실 시범', role: 'guest', projects: ['2026:4.3'] }]);
+    { id: s.id, kind: 'team', name: '연구실 시범', role: 'guest', projects: ['2026:4.3'], charter: { in_force: 1, needs_consent: false, proposal: null } }]);
   assert.deepEqual((await spaces.members(B, s.id)).map(m => `${m.uid}:${m.role}`), ['u_a:owner', 'u_b:member', 'u_g:guest']);
   assert.equal(await outcome(spaces.members(G, s.id)), 'forbidden');
 });
@@ -66,6 +72,7 @@ test('agents work inside spaces but never govern them; scopes narrow what they d
   assert.equal(await outcome(spaces.create(bot('u_a'), '에이전트가 만든 팀')), 'forbidden');
   const s = await spaces.create(A, '내 팀');
   await spaces.setMember(A, s.id, 'u_b', 'member');
+  await open(spaces, A, s.id, B);
   for (const p of [spaces.setMember(bot('u_a'), s.id, 'u_c', 'member'), spaces.transfer(bot('u_a'), s.id, 'u_b'),
     spaces.remove(bot('u_a'), s.id), spaces.removeMember(bot('u_b'), s.id, 'u_b')]) assert.equal(await outcome(p), 'forbidden');
   assert.equal(await outcome(spaces.view(bot('u_b', ['wbs.read']), s.id, 'write')), 'forbidden');
@@ -80,6 +87,7 @@ test('agents work inside spaces but never govern them; scopes narrow what they d
   assert.equal(await outcome(spaces.view(T, PERSONAL, 'read')), 'not_found');
   assert.equal(await outcome(spaces.members(T, s.id)), 'forbidden');
   const other = await spaces.create(B, '다른 팀');
+  await open(spaces, B, other.id);
   assert.equal(await outcome(spaces.view(T, other.id, 'read')), 'not_found');
   assert.deepEqual((await spaces.list(T)).map(x => x.role), ['delegate']);
 });
@@ -127,6 +135,7 @@ test('deleting a space removes its ledger and memberships; deleting an account e
   const store = new MemoryStore(), ledger = new Ledger(store), spaces = new Spaces(store);
   const t = await spaces.create(A, '팀'), solo = await spaces.create(A, '혼자 쓰는 공간');
   await spaces.setMember(A, t.id, 'u_b', 'member');
+  await open(spaces, A, t.id, B);
   await ledger.add(claude('u_a'), task('팀 원장 행: 삭제될 데이터'), (await spaces.view(A, t.id, 'write')).owner);
   await ledger.add(claude('u_b'), task('개인 원장 행: 남아야 하는 데이터'));
 

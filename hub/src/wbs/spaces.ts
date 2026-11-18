@@ -6,8 +6,13 @@
 //
 // Every decision goes through the permission table (access.ts): the stored membership is the relation tuple, the table
 // says what it grants, and agents act within the person's relation and scopes but never govern a space.
+//
+// The team charter (at most 9 lines) gates the space: it opens once a charter is in force, which takes every owner's and
+// member's agreement, and each owner or member enters only after agreeing to the version in force (a newcomer agrees on
+// joining). A change is a new version: it takes effect when everyone agrees, the version it replaces is kept as
+// superseded, and withdrawn proposals stay too, so the versions with their dated consents are the change record.
 import { randomBytes } from 'node:crypto';
-import { spaceOwner, type Membership, type Store } from '../store/types.js';
+import { spaceOwner, type CharterVersion, type Membership, type Store } from '../store/types.js';
 import { LedgerError, type View } from './service.js';
 import { callerUid, decide, type Action, type Caller, type Relation } from './access.js';
 
@@ -15,6 +20,7 @@ export const PERSONAL = 'personal';
 export const MAX_PEOPLE = 10;
 const SPACE_ID = /^s_[A-Za-z0-9_-]{22}$/;
 const PROJECT = /^\d{4}:\d+\.\d+$/;   // a package of one year, e.g. "2026:4.3"
+export const CHARTER_LINES = 9;
 
 /** An account id as the hub receives it from sign-in; "/" would let it pass for a ledger path, so it is refused. */
 export function assertUid(uid: unknown): string {
@@ -34,6 +40,16 @@ function cleanProjects(p: unknown): string[] {
   return [...new Set(p as string[])].sort();
 }
 
+function cleanLines(lines: unknown): string[] {
+  if (!Array.isArray(lines) || !lines.length || lines.length > CHARTER_LINES) throw new LedgerError('invalid', `A charter has 1–${CHARTER_LINES} lines`);
+  return lines.map(l => {
+    const t = String(l ?? '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 300) throw new LedgerError('invalid', 'Each charter line is 1–300 characters');
+    return t;
+  });
+}
+const cleanNote = (n: unknown) => { const t = String(n ?? '').trim(); if (t.length > 500) throw new LedgerError('invalid', 'A note is at most 500 characters'); return t; };
+
 type Rel = { relation: Relation; member?: Membership };
 
 export class Spaces {
@@ -50,6 +66,7 @@ export class Spaces {
       return { owner: assertUid(uid) };
     }
     const r = await this.need(caller, space, action);
+    await this.gate(caller, space, r);
     return r.relation === 'guest' ? { owner: spaceOwner(space), projects: r.member?.projects ?? [] } : { owner: spaceOwner(space) };
   }
 
@@ -70,9 +87,12 @@ export class Spaces {
     }
     this.check(caller, 'owner', 'space.see');
     const teams = await Promise.all((await this.store.spacesOf(assertUid(caller.uid))).map(async m => {
-      const [s, me] = await Promise.all([this.store.space(m.id), this.store.membership(m.id, caller.uid)]);
+      const [s, me, vs] = await Promise.all([this.store.space(m.id), this.store.membership(m.id, caller.uid), this.store.charters(m.id)]);
       if (!s || !me) return null;
-      return { id: s.id, kind: 'team' as const, name: s.name, role: me.role, ...(me.role === 'guest' ? { projects: me.projects ?? [] } : {}) };
+      const active = vs.find(c => c.status === 'active'), open = vs.find(c => c.status === 'proposed'), bound = me.role !== 'guest';
+      return { id: s.id, kind: 'team' as const, name: s.name, role: me.role, ...(me.role === 'guest' ? { projects: me.projects ?? [] } : {}),
+        charter: { in_force: active?.version ?? null, needs_consent: bound && !active?.consents[caller.uid]?.agree,
+          proposal: open ? { version: open.version, answered: !!open.consents[caller.uid] } : null } };
     }));
     return [{ id: PERSONAL, kind: 'personal' as const, name: '', role: 'owner' as const }, ...teams.filter(t => t !== null)];
   }
@@ -95,6 +115,7 @@ export class Spaces {
     const p = role === 'guest' ? cleanProjects(projects ?? cur?.projects) : undefined;
     if (role === 'member' && projects !== undefined) throw new LedgerError('invalid', 'Members see every project; projects are for guests');
     await this.store.putMember(id, { uid: who, role, since: cur?.since ?? Date.now(), by: callerUid(caller)!, ...(p ? { projects: p } : {}) });
+    await this.settle(id);   // a member who becomes a guest no longer holds up a proposal
     return { uid: who, role, ...(p ? { projects: p } : {}) };
   }
 
@@ -107,6 +128,7 @@ export class Spaces {
     if (!m) throw new LedgerError('not_found', 'Not in this space');
     if (m.role === 'owner') throw new LedgerError('invalid', 'The owner cannot be removed; hand the space over first');
     await this.store.removeMember(id, who);
+    await this.settle(id);   // the last person still to answer may be the one who left
     return { removed: who };
   }
 
@@ -134,6 +156,90 @@ export class Spaces {
     for (const s of owned) if ((await this.store.members(s.id)).length > 1) throw new LedgerError('invalid', `Hand space ${s.id} to a member before deleting the account`);
     for (const s of mine) await (s.role === 'owner' ? this.store.deleteSpace(s.id) : this.store.removeMember(s.id, uid));
     await this.store.deleteAccount(uid);
+  }
+
+  // ---------------------------------------------------------------- the team charter
+  /** The charter: the version in force, an open proposal, and every version so far. Who agreed, objected or has yet to
+   *  answer is named for those who may see the member list, and counted for anyone else. */
+  async charter(caller: Caller, id: string) {
+    const r = await this.need(caller, id, 'charter.read');
+    const [vs, ms] = await Promise.all([this.store.charters(id), this.store.members(id)]);
+    const people = ms.filter(m => m.role !== 'guest').map(m => m.uid), named = decide(caller, r.relation, 'members.read').allow;
+    const tally = (c: CharterVersion) => {
+      const agreed = people.filter(u => c.consents[u]?.agree), objected = people.filter(u => c.consents[u] && !c.consents[u].agree);
+      const waiting = people.filter(u => !c.consents[u]);
+      return named ? { agreed: agreed.map(u => ({ uid: u, at: c.consents[u].at })), objected, waiting }
+        : { agreed: agreed.length, objected: objected.length, waiting: waiting.length };
+    };
+    const show = (c: CharterVersion) => ({ version: c.version, lines: c.lines, note: c.note, by: named ? c.by : undefined, at: c.at,
+      ...(c.activeAt ? { active_at: c.activeAt } : {}), ...tally(c) });
+    const active = vs.find(c => c.status === 'active'), open = vs.find(c => c.status === 'proposed');
+    return { open: !!active, in_force: active ? show(active) : null, proposal: open ? show(open) : null,
+      history: vs.map(c => ({ version: c.version, status: c.status, at: c.at, ...(c.activeAt ? { active_at: c.activeAt } : {}), ...(c.closedAt ? { closed_at: c.closedAt } : {}) })) };
+  }
+
+  /** An owner or member proposes a version (at most 9 lines) and agrees by proposing. One proposal is open at a time; it
+   *  takes effect once everyone agrees (a space of one person adopts it at once). */
+  async proposeCharter(caller: Caller, id: string, lines: string[], note = '') {
+    await this.need(caller, id, 'charter.propose');
+    const uid = callerUid(caller)!, L = cleanLines(lines), n = cleanNote(note), now = Date.now();
+    await this.store.charterTx(id, async vs => {
+      if (vs.some(c => c.status === 'proposed')) throw new LedgerError('invalid', 'A charter proposal is already open; decide or withdraw it first');
+      const c: CharterVersion = { version: Math.max(0, ...vs.map(v => v.version)) + 1, lines: L, note: n, by: uid, at: now, status: 'proposed', consents: { [uid]: { agree: true, at: now } } };
+      return { put: [c], out: null };
+    });
+    await this.settle(id);
+    return this.charter(caller, id);
+  }
+
+  /** An owner or member answers a version: agree or object to an open proposal (an objection keeps it open; answering
+   *  again replaces the answer), or agree to the version in force, which is how a newcomer enters. */
+  async consentCharter(caller: Caller, id: string, version: number, agree: boolean) {
+    await this.need(caller, id, 'charter.consent');
+    const uid = callerUid(caller)!;
+    await this.store.charterTx(id, async vs => {
+      const c = vs.find(v => v.version === version);
+      if (!c || (c.status !== 'proposed' && c.status !== 'active')) throw new LedgerError('not_found', `No open or in-force charter version ${version}`);
+      if (c.status === 'active' && !agree) throw new LedgerError('invalid', 'To change the charter in force, propose a new version');
+      return { put: [{ ...c, consents: { ...c.consents, [uid]: { agree: !!agree, at: Date.now() } } }], out: null };
+    });
+    await this.settle(id);
+    return this.charter(caller, id);
+  }
+
+  /** The proposer or the owner withdraws an open proposal; it stays in the history as withdrawn. */
+  async withdrawCharter(caller: Caller, id: string, version: number) {
+    const r = await this.need(caller, id, 'charter.propose'), uid = callerUid(caller)!;
+    await this.store.charterTx(id, async vs => {
+      const c = vs.find(v => v.version === version && v.status === 'proposed');
+      if (!c) throw new LedgerError('not_found', `No open proposal ${version}`);
+      if (c.by !== uid && r.relation !== 'owner') throw new LedgerError('forbidden', 'Only the proposer or the owner can withdraw a proposal');
+      return { put: [{ ...c, status: 'withdrawn', closedAt: Date.now() }], out: null };
+    });
+    return this.charter(caller, id);
+  }
+
+  /** An open proposal takes effect once every owner and member has agreed; the version it replaces becomes superseded. */
+  private async settle(id: string) {
+    const people = (await this.store.members(id)).filter(m => m.role !== 'guest').map(m => m.uid);
+    await this.store.charterTx(id, async vs => {
+      const open = vs.find(c => c.status === 'proposed');
+      if (!open || !people.length || !people.every(u => open.consents[u]?.agree)) return { put: [], out: null };
+      const now = Date.now(), old = vs.find(c => c.status === 'active');
+      const put: CharterVersion[] = [{ ...open, status: 'active', activeAt: now }];
+      if (old) put.push({ ...old, status: 'superseded', closedAt: now });
+      return { put, out: null };
+    });
+  }
+
+  /** The charter gate on team content: the space is open once a charter is in force, and an owner or member enters after
+   *  agreeing to that version. Guests and the team's agent enter an open space without a consent of their own. */
+  private async gate(caller: Caller, id: string, r: Rel) {
+    const active = (await this.store.charters(id)).find(c => c.status === 'active');
+    if (!active) throw new LedgerError('consent_required', 'This team space opens once everyone has agreed to its charter');
+    if ((r.relation === 'owner' || r.relation === 'member') && !active.consents[callerUid(caller)!]?.agree) {
+      throw new LedgerError('consent_required', `Agree to the team charter (version ${active.version}) to enter this space`, { version: active.version });
+    }
   }
 
   /** The relation tuple behind a call: the caller's membership, or a team agent's delegation by this space. */

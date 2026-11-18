@@ -20,7 +20,7 @@ export type Relation = 'owner' | 'member' | 'guest' | 'delegate' | 'none';
 
 export type Action =
   | 'space.see' | 'plan.read' | 'plan.write' | 'members.read' | 'members.manage' | 'billing.manage'
-  | 'charter.propose' | 'cards.read' | 'space.transfer' | 'space.delete' | 'space.leave';
+  | 'charter.read' | 'charter.propose' | 'charter.consent' | 'cards.read' | 'space.transfer' | 'space.delete' | 'space.leave';
 
 /** Per action: the relations that grant it, and the scope an agent acting for a person needs (null: people only). */
 export const TABLE: Readonly<Record<Action, { by: readonly Relation[]; agent: 'wbs.read' | 'wbs.write' | null }>> = {
@@ -30,7 +30,9 @@ export const TABLE: Readonly<Record<Action, { by: readonly Relation[]; agent: 'w
   'members.read':    { by: ['owner', 'member'], agent: 'wbs.read' },
   'members.manage':  { by: ['owner'], agent: null },   // invite, remove, change a role, assign a guest's projects
   'billing.manage':  { by: ['owner'], agent: null },
+  'charter.read':    { by: ['owner', 'member', 'delegate'], agent: 'wbs.read' },
   'charter.propose': { by: ['owner', 'member'], agent: null },
+  'charter.consent': { by: ['owner', 'member'], agent: null },   // agreeing is a person's own act
   'cards.read':      { by: ['owner', 'member', 'delegate'], agent: null },   // work-style and direction cards (4.2)
   'space.transfer':  { by: ['owner'], agent: null },
   'space.delete':    { by: ['owner'], agent: null },

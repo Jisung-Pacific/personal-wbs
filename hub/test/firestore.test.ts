@@ -37,6 +37,10 @@ test('Firestore store: a team space keeps its ledger, key and members apart; del
   const s = await spaces.create(person(a), '팀 공간 시험');
   await spaces.setMember(person(a), s.id, b, 'member');
   await spaces.setMember(person(a), s.id, 'u_g' + Date.now(), 'guest', ['2026:4.3']);
+  await spaces.proposeCharter(person(a), s.id, ['팀 작업은 기본 공개다.']);
+  assert.equal((await spaces.charter(person(a), s.id)).open, false, 'the member has not agreed yet');
+  await spaces.consentCharter(person(b), s.id, 1, true);
+  assert.deepEqual((await store.charters(s.id)).map(c => c.status), ['active']);
   const team = (await spaces.view(person(b), s.id, 'write')).owner;
   await ledger.add({ uid: b, clientName: 'Claude' }, { area: '4 창업·제품', package: '4.3 서비스 개발', task: '팀 원장 행 기록 테스트', start: '2026-11-18', status: '진행 중' }, team);
   assert.equal((await store.space(s.id))!.name, '팀 공간 시험');

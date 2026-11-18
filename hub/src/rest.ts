@@ -12,7 +12,7 @@ export type Authed = Request & { actor?: Actor; scopes?: string[] };
 
 function send(res: Response, f: () => Promise<unknown>) {
   f().then(v => res.json(v)).catch(e => {
-    if (e instanceof LedgerError) return res.status({ not_found: 404, duplicate: 409, forbidden: 403, invalid: 400 }[e.code]).json({ error: e.code, message: e.message, detail: e.detail });
+    if (e instanceof LedgerError) return res.status({ not_found: 404, duplicate: 409, forbidden: 403, consent_required: 403, invalid: 400 }[e.code]).json({ error: e.code, message: e.message, detail: e.detail });
     if (e instanceof z.ZodError) return res.status(400).json({ error: 'invalid', issues: e.issues });
     console.error(e); res.status(500).json({ error: 'server_error' });
   });
@@ -27,6 +27,7 @@ export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox): Router
   const at = (req: Authed, need: 'read' | 'write') =>
     spaces.view(agent(req.actor!.uid, req.actor!.clientName, req.scopes || []), typeof req.query.space === 'string' ? req.query.space : undefined, need);
   r.get('/spaces', need('wbs.read'), (req: Authed, res) => send(res, () => spaces.list(agent(req.actor!.uid, req.actor!.clientName, req.scopes || []))));
+  r.get('/charter', need('wbs.read'), (req: Authed, res) => send(res, () => spaces.charter(agent(req.actor!.uid, req.actor!.clientName, req.scopes || []), String(req.query.space || ''))));
   r.get('/rows', need('wbs.read'), (req: Authed, res) => send(res, async () => ledger.search(await at(req, 'read'), {
     year: req.query.year as string | undefined, status: list(req.query.status) as never, package: req.query.package as string | undefined,
     q: req.query.q as string | undefined, limit: req.query.limit ? Number(req.query.limit) : undefined })));
@@ -70,6 +71,7 @@ export function openapi(cfg: Config, version: string) {
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { status: { type: 'string', enum: ['완료', '진행 중', '대기·심사', '백로그'] }, end: { type: 'string' }, due: { type: 'string' }, importance: { type: 'string' }, blocker: { type: 'string' }, memo: { type: 'string' }, evidence: { type: 'string' } } } } } }, responses: { 200: { description: 'Updated' } } },
       },
       '/packages/{year}': { get: { operationId: 'listPackages', summary: 'Packages of a year and the next free codes', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }, space], responses: { 200: { description: 'Packages' } } } },
+      '/charter': { get: { operationId: 'getCharter', summary: 'A team space\'s charter: the version in force, an open proposal and who has answered, every version so far', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }], responses: { 200: { description: 'Charter' } } } },
       '/spaces': { get: { operationId: 'listSpaces', summary: 'The personal space and the team spaces the user belongs to, with the user\'s role; pass a team id as `space` to other calls', responses: { 200: { description: 'Spaces' } } } },
       '/brief': { get: { operationId: 'brief', summary: 'Compact picture for planning and advice: status, flow, focus, open and due work, waiting items, work style, signals', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Brief' } } } },
       '/summary': { get: { operationId: 'summary', summary: 'Counts, open tasks, latest changes', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Summary' } } } },

@@ -13,7 +13,7 @@ import { buildBrief } from './brief.js';
 export interface Actor { uid: string; clientName: string; evidence?: string }
 
 export class LedgerError extends Error {
-  constructor(public code: 'not_found' | 'invalid' | 'duplicate' | 'forbidden', message: string, public detail?: unknown) { super(message); }
+  constructor(public code: 'not_found' | 'invalid' | 'duplicate' | 'forbidden' | 'consent_required', message: string, public detail?: unknown) { super(message); }
 }
 
 const date = z.string().regex(DATE_RE, 'YYYY-MM-DD, or YYYY-MM when only the month is known');

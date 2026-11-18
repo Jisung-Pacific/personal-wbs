@@ -13,6 +13,16 @@ export const isSpaceOwner = (o: Owner) => o.startsWith('spaces/');
 export type SpaceRole = 'owner' | 'member' | 'guest';
 /** A team space. The personal space needs no record: it is the account itself. */
 export interface SpaceRecord { id: string; name: string; owner: string; created: number }
+/** One version of a team space's charter (at most 9 lines). A proposal becomes active when every owner and member has
+ *  agreed; the active version it replaces is kept as superseded, so the versions are the change history. */
+export interface CharterVersion {
+  version: number; lines: string[]; note: string; by: string; at: number;
+  status: 'proposed' | 'active' | 'superseded' | 'withdrawn';
+  activeAt?: number; closedAt?: number;
+  /** each person's decision on this version: agree (or object, which keeps a proposal open) and when */
+  consents: Record<string, { agree: boolean; at: number }>;
+}
+
 /** `projects`: for a guest, the projects (packages, as "YYYY:<code>", e.g. "2026:4.3") whose plan and work it may read. */
 export interface Membership { uid: string; role: SpaceRole; since: number; by: string; projects?: string[] }
 
@@ -122,4 +132,8 @@ export interface Store {
   setOwner(id: string, uid: string): Promise<void>;
   /** Shreds the space's data key, then removes its ledger, its members and their entries in the members' own lists. */
   deleteSpace(id: string): Promise<void>;
+  /** Every version of the space's charter, oldest first. */
+  charters(id: string): Promise<CharterVersion[]>;
+  /** Reads the versions and writes the ones `fn` returns in `put`, atomically (one change at a time per space). */
+  charterTx<T>(id: string, fn: (versions: CharterVersion[]) => Promise<{ put: CharterVersion[]; out: T }>): Promise<T>;
 }

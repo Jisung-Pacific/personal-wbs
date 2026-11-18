@@ -119,7 +119,7 @@ test('MCP tools: add, duplicate guard, steps, update, isolation, scope-limited t
     const t = await connect(base, { uid: 'u_j', clientName: 'Claude' });
     const c = await mcp(base, t.access_token);
     const names = (await c.listTools()).tools.map(x => x.name).sort();
-    assert.deepEqual(names, ['wbs_add', 'wbs_brief', 'wbs_export', 'wbs_get', 'wbs_inbox_add', 'wbs_inbox_list', 'wbs_inbox_mark', 'wbs_packages', 'wbs_search', 'wbs_spaces', 'wbs_summary', 'wbs_update']);
+    assert.deepEqual(names, ['wbs_add', 'wbs_brief', 'wbs_charter', 'wbs_export', 'wbs_get', 'wbs_inbox_add', 'wbs_inbox_list', 'wbs_inbox_mark', 'wbs_packages', 'wbs_search', 'wbs_spaces', 'wbs_summary', 'wbs_update']);
     // a new package needs its area; then tasks take the next free code
     const a1 = json(await c.callTool({ name: 'wbs_add', arguments: { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: 'PP WBS 허브 MCP 서버와 OAuth 인가 서버 구현', start: '2026-11-06', status: '진행 중', evidence: 'cc:test' } }));
     assert.equal(a1.created.code, '5.3.1'); assert.equal(a1.created.source, 'Claude');
@@ -179,6 +179,12 @@ test('team space over MCP and REST: agents list it, write and read its plan; a g
     const spaces = new Spaces(store), s = await spaces.create(person('u_j'), '연구실');   // people create and staff spaces
     await spaces.setMember(person('u_j'), s.id, 'u_g', 'guest', ['2026:4.3']);
     const c = await mcp(base, (await connect(base, { uid: 'u_j', clientName: 'Claude' })).access_token);
+    // closed until a charter is in force; the owner alone is everyone who must agree, so proposing opens it
+    const shut = await c.callTool({ name: 'wbs_search', arguments: { space: s.id } });
+    assert.equal(shut.isError, true); assert.equal(json(shut).error, 'consent_required');
+    await spaces.proposeCharter(person('u_j'), s.id, ['팀 작업은 기본 공개다.', '에이전트는 제안하고 사람은 승인한다.']);
+    const ch = json(await c.callTool({ name: 'wbs_charter', arguments: { space: s.id } }));
+    assert.equal(ch.open, true); assert.equal(ch.in_force.version, 1); assert.equal(ch.in_force.lines.length, 2);
     assert.deepEqual(json(await c.callTool({ name: 'wbs_spaces', arguments: {} })).map((x: { id: string; role: string }) => `${x.id === s.id ? 'team' : x.id}:${x.role}`), ['personal:owner', 'team:owner']);
     const t1 = json(await c.callTool({ name: 'wbs_add', arguments: { space: s.id, area: '4 창업·제품', package: '4.3 서비스 개발', task: '팀 계획: 허브 공간 전환 API', start: '2026-11-18', status: '진행 중' } }));
     const t2 = json(await c.callTool({ name: 'wbs_add', arguments: { space: s.id, area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: '팀 계획: 헌장 동의 기록', start: '2026-11-18', status: '진행 중' } }));

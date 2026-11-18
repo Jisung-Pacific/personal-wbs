@@ -10,7 +10,7 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 
 | Path | For |
 | --- | --- |
-| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, and with `wbs.write` also `wbs_add`, `wbs_update`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
+| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, `wbs_charter`, and with `wbs.write` also `wbs_add`, `wbs_update`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
@@ -50,6 +50,9 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   relation tuples: agents act within their person's role and granted scopes and never manage a space (inviting, billing,
   the charter, handing over, deleting stay with people); outsiders are told a space does not exist. Deleting a space
   shreds its key first; an account that owns a space with other members hands it over before it can be deleted.
+  A team space opens once a charter (at most 9 lines) is in force, which takes every owner's and member's agreement;
+  each of them enters after agreeing to the version in force, a change takes effect only when everyone agrees, and every
+  version stays with its dated answers as the change record. Agreeing and proposing are people's acts, never an agent's.
 - **Tokens**: ES256 JWT access tokens (1 h) bound to one resource (`/mcp`, `/v1` or the hub); refresh tokens (30 days)
   rotate and a reused one revokes the grant; codes (5 min) and parked requests (10 min) work once. Only SHA-256 hashes
   of secrets are stored, and a TTL policy removes expired OAuth state.

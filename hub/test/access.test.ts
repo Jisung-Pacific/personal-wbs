@@ -13,6 +13,8 @@ plan.read        Y     Y      Y     Y
 plan.write       Y     Y      N     N
 members.read     Y     Y      N     N
 members.manage   Y     N      N     N
+charter.read     Y     Y      N     Y
+charter.consent  Y     Y      N     N
 billing.manage   Y     N      N     N
 charter.propose  Y     Y      N     N
 cards.read       Y     Y      N     Y
@@ -20,7 +22,7 @@ space.transfer   Y     N      N     N
 space.delete     Y     N      N     N
 space.leave      N     Y      Y     N`;
 /** What an agent signed in by a person may do, and the scope it needs; every other action is for people only. */
-const AGENT: Partial<Record<Action, string>> = { 'space.see': 'wbs.read', 'plan.read': 'wbs.read', 'members.read': 'wbs.read', 'plan.write': 'wbs.write' };
+const AGENT: Partial<Record<Action, string>> = { 'space.see': 'wbs.read', 'plan.read': 'wbs.read', 'members.read': 'wbs.read', 'charter.read': 'wbs.read', 'plan.write': 'wbs.write' };
 
 const [head, ...lines] = SPEC.trim().split('\n').map(l => l.trim().split(/\s+/));
 const cols = head.slice(1) as Relation[];

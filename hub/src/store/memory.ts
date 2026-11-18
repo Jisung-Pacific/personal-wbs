@@ -1,7 +1,7 @@
 // In-memory store for tests and local runs. Same contract as the Firestore store, including single-use semantics and
 // per-user transactions (a promise chain per uid serialises them, as Firestore's transactions would).
 import {
-  spaceOwner, type AuthCode, type AuthRequest, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
+  spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
   type RefreshRecord, type Row, type RowFilter, type SpaceRecord, type Store,
 } from './types.js';
 
@@ -127,5 +127,19 @@ export class MemoryStore implements Store {
     if (prev && prev.uid !== uid) prev.role = 'member';
     next.role = 'owner'; s.owner = uid;
   }
-  async deleteSpace(id: string) { this.spaces.delete(id); this.crew.delete(id); this.dropOwner(spaceOwner(id)); }
+  async deleteSpace(id: string) { this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.dropOwner(spaceOwner(id)); }
+
+  private charterOf = new Map<string, Map<number, CharterVersion>>();
+  async charters(id: string) { return [...(this.charterOf.get(id)?.values() ?? [])].sort((a, b) => a.version - b.version).map(c => structuredClone(c)); }
+  async charterTx<T>(id: string, fn: (versions: CharterVersion[]) => Promise<{ put: CharterVersion[]; out: T }>): Promise<T> {
+    const lock = 'charter|' + id, prev = this.locks.get(lock) || Promise.resolve();
+    const run = prev.then(async () => {
+      const { put, out } = await fn(await this.charters(id));
+      let m = this.charterOf.get(id); if (!m) { m = new Map(); this.charterOf.set(id, m); }
+      for (const c of put) m.set(c.version, structuredClone(c));   // writes land only after fn succeeds
+      return out;
+    });
+    this.locks.set(lock, run.catch(() => undefined));
+    return run;
+  }
 }
