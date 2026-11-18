@@ -10,7 +10,7 @@ export type Authed = Request & { actor?: Actor; scopes?: string[] };
 
 function send(res: Response, f: () => Promise<unknown>) {
   f().then(v => res.json(v)).catch(e => {
-    if (e instanceof LedgerError) return res.status(e.code === 'not_found' ? 404 : e.code === 'duplicate' ? 409 : 400).json({ error: e.code, message: e.message, detail: e.detail });
+    if (e instanceof LedgerError) return res.status({ not_found: 404, duplicate: 409, forbidden: 403, invalid: 400 }[e.code]).json({ error: e.code, message: e.message, detail: e.detail });
     if (e instanceof z.ZodError) return res.status(400).json({ error: 'invalid', issues: e.issues });
     console.error(e); res.status(500).json({ error: 'server_error' });
   });

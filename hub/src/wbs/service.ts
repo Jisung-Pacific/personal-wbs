@@ -2,7 +2,7 @@
 // ledger transaction, so two agents logging at once can never take the same code. The rules are the ledger's own:
 // one row per dated deliverable, permanent codes (max + 1 in the package or under the parent), every change logged.
 import { z } from 'zod';
-import type { LedgerEvent, Row, Store } from '../store/types.js';
+import type { LedgerEvent, Owner, Row, Store } from '../store/types.js';
 import {
   DATE_RE, STATUSES, agentLabel, appendEvidence, codeKey, dateText, emptyRow, eventsFromCsv, eventsToCsv, fileOrderOf, mergeSource,
   overlap, rowsFromCsv, rowsToCsv, sortRows, todayKst, tokens, type FileOrder,
@@ -13,7 +13,7 @@ import { buildBrief } from './brief.js';
 export interface Actor { uid: string; clientName: string; evidence?: string }
 
 export class LedgerError extends Error {
-  constructor(public code: 'not_found' | 'invalid' | 'duplicate', message: string, public detail?: unknown) { super(message); }
+  constructor(public code: 'not_found' | 'invalid' | 'duplicate' | 'forbidden', message: string, public detail?: unknown) { super(message); }
 }
 
 const date = z.string().regex(DATE_RE, 'YYYY-MM-DD, or YYYY-MM when only the month is known');
@@ -107,8 +107,9 @@ export class Ledger {
     return buildBrief(await this.store.rows(uid), { today: todayKst(), year });
   }
 
-  /** Adds one row with the next free code. Refuses an obvious duplicate unless the caller says it is different work. */
-  async add(actor: Actor, raw: z.input<typeof AddInput>) {
+  /** Adds one row with the next free code. Refuses an obvious duplicate unless the caller says it is different work.
+   *  `owner`: the ledger written to, the actor's own unless a team space was resolved for it (Spaces.ledgerFor). */
+  async add(actor: Actor, raw: z.input<typeof AddInput>, owner: Owner = actor.uid) {
     const input = AddInput.parse(raw), src = agentLabel(actor.clientName), today = todayKst();
     const year = input.year || input.start.slice(0, 4);
     if (input.end && input.end < input.start) throw new LedgerError('invalid', 'end is before start');
@@ -116,7 +117,7 @@ export class Ledger {
     const pkgCode = input.package.split(' ')[0];
     if (!/^\d+\.\d+$/.test(pkgCode)) throw new LedgerError('invalid', 'package must start with its code, e.g. "4.3 …"');
 
-    return this.store.ledgerTx(actor.uid, async tx => {
+    return this.store.ledgerTx(owner, async tx => {
       const inPkg = await tx.rows({ year, packageCode: pkgCode });
       let row = emptyRow(), parent: Row | null = null;
       if (input.parent) {
@@ -167,9 +168,9 @@ export class Ledger {
   }
 
   /** Status, dates, blocker, due and importance; every change lands in the history. Task text is never rewritten here. */
-  async update(actor: Actor, raw: z.input<typeof UpdateInput>) {
+  async update(actor: Actor, raw: z.input<typeof UpdateInput>, owner: Owner = actor.uid) {
     const input = UpdateInput.parse(raw), src = agentLabel(actor.clientName), today = todayKst();
-    return this.store.ledgerTx(actor.uid, async tx => {
+    return this.store.ledgerTx(owner, async tx => {
       const r = await tx.get(input.year, input.code);
       if (!r) throw new LedgerError('not_found', `No row ${input.year} ${input.code}`);
       const was = { ...r }, evs: LedgerEvent[] = [];

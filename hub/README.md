@@ -43,6 +43,11 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   bound to its account and path, so the database, its exports and backups hold ciphertext; only the year and code of a
   row stay readable for queries. The runtime may use that one KMS key and nothing else; deleting an account deletes its
   wrapped key first, which makes every copy unreadable (crypto-shredding). Code: `src/crypto/envelope.ts`.
+- **Spaces**: an account's own ledger is its personal space. A team space (one owner, equal members, read-only guests,
+  at most 10 people) keeps its ledger under `spaces/<id>` with its own data key, sealed apart from every member's personal
+  ledger; only memberships (account id and role) stay readable, so access can be checked. Deleting a space shreds its
+  key first; an account that owns a space with other members hands it over before it can be deleted. Code:
+  `src/wbs/spaces.ts`.
 - **Tokens**: ES256 JWT access tokens (1 h) bound to one resource (`/mcp`, `/v1` or the hub); refresh tokens (30 days)
   rotate and a reused one revokes the grant; codes (5 min) and parked requests (10 min) work once. Only SHA-256 hashes
   of secrets are stored, and a TTL policy removes expired OAuth state.

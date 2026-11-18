@@ -28,3 +28,22 @@ test('Firestore store: concurrent adds get distinct codes; history keeps its ord
   assert.equal((await store.useRefresh('r1'))!.used, false); assert.equal((await store.useRefresh('r1'))!.used, true);
   await store.revokeFamily('f'); assert.equal(await store.useRefresh('r1'), null);
 });
+
+test('Firestore store: a team space keeps its ledger, key and members apart; deleting it shreds and removes them', { skip: !on }, async () => {
+  const { Spaces } = await import('../src/wbs/spaces.js'), { spaceOwner } = await import('../src/store/types.js');
+  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), ledger = new Ledger(store), spaces = new Spaces(store);
+  const a = 'u_a' + Date.now(), b = 'u_b' + Date.now();
+  await ledger.add({ uid: a, clientName: 'Claude' }, { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: '개인 원장 행 기록 테스트', start: '2026-11-18', status: '완료' });
+  const s = await spaces.create(a, '팀 공간 시험');
+  await spaces.setMember(a, s.id, b, 'member');
+  const team = await spaces.ledgerFor(b, s.id, 'write');
+  await ledger.add({ uid: b, clientName: 'Claude' }, { area: '4 창업·제품', package: '4.3 서비스 개발', task: '팀 원장 행 기록 테스트', start: '2026-11-18', status: '진행 중' }, team);
+  assert.equal((await store.space(s.id))!.name, '팀 공간 시험');
+  assert.deepEqual((await store.spacesOf(b)).map(x => x.role), ['member']);
+  assert.equal((await store.rows(team)).length, 1); assert.equal((await store.rows(a)).length, 1);
+  await spaces.transfer(a, s.id, b);
+  assert.equal((await store.space(s.id))!.owner, b); assert.equal((await store.membership(s.id, a))!.role, 'member');
+  await spaces.remove(b, s.id);
+  assert.equal(await store.space(s.id), null); assert.equal((await store.rows(spaceOwner(s.id))).length, 0);
+  assert.deepEqual(await store.spacesOf(a), []); assert.equal((await store.rows(a)).length, 1, 'the personal ledger stays');
+});

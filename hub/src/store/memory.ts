@@ -1,6 +1,9 @@
 // In-memory store for tests and local runs. Same contract as the Firestore store, including single-use semantics and
 // per-user transactions (a promise chain per uid serialises them, as Firestore's transactions would).
-import type { AuthCode, AuthRequest, InboxItem, LedgerEvent, LedgerTx, OAuthClient, RefreshRecord, Row, RowFilter, Store } from './types.js';
+import {
+  spaceOwner, type AuthCode, type AuthRequest, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
+  type RefreshRecord, type Row, type RowFilter, type SpaceRecord, type Store,
+} from './types.js';
 
 const key = (year: string, code: string) => `${year}|${code}`;
 
@@ -89,8 +92,40 @@ export class MemoryStore implements Store {
   async putSecret(uid: string, name: string, value: unknown) { this.secrets.set(`${uid}|${name}`, structuredClone(value)); }
   async secret<T>(uid: string, name: string) { const v = this.secrets.get(`${uid}|${name}`); return v === undefined ? null : structuredClone(v) as T; }
   async deleteAccount(uid: string) {
-    this.ledgers.delete(uid); this.boxes.delete(uid);
-    for (const k of [...this.secrets.keys()]) if (k.startsWith(uid + '|')) this.secrets.delete(k);
+    this.dropOwner(uid);
     for (const [h, r] of this.refresh) if (r.uid === uid) this.refresh.delete(h);
   }
+  /** Everything kept under one ledger owner: its rows and history, inbox and secrets. */
+  private dropOwner(owner: string) {
+    this.ledgers.delete(owner); this.boxes.delete(owner);
+    for (const k of [...this.secrets.keys()]) if (k.startsWith(owner + '|')) this.secrets.delete(k);
+  }
+
+  // team spaces: the record and its members; the space's ledger is the ordinary ledger under `spaces/<id>`
+  private spaces = new Map<string, SpaceRecord>();
+  private crew = new Map<string, Map<string, Membership>>();
+  async createSpace(s: SpaceRecord) {
+    if (this.spaces.has(s.id)) throw new Error(`space ${s.id} exists`);
+    this.spaces.set(s.id, { ...s });
+    this.crew.set(s.id, new Map([[s.owner, { uid: s.owner, role: 'owner', since: s.created, by: s.owner }]]));
+  }
+  async space(id: string) { const s = this.spaces.get(id); return s ? { ...s } : null; }
+  async spacesOf(uid: string) {
+    return [...this.crew].flatMap(([id, ms]) => { const m = ms.get(uid); return m ? [{ id, role: m.role }] : []; });
+  }
+  async membership(id: string, uid: string) { const m = this.crew.get(id)?.get(uid); return m ? { ...m } : null; }
+  async members(id: string) { return [...(this.crew.get(id)?.values() ?? [])].map(m => ({ ...m })); }
+  async putMember(id: string, m: Membership) {
+    const ms = this.crew.get(id); if (!ms) throw new Error(`no space ${id}`);
+    ms.set(m.uid, { ...m });
+  }
+  async removeMember(id: string, uid: string) { this.crew.get(id)?.delete(uid); }
+  async setOwner(id: string, uid: string) {
+    const s = this.spaces.get(id), ms = this.crew.get(id), next = ms?.get(uid);
+    if (!s || !ms || !next) throw new Error(`no member ${uid} in space ${id}`);
+    const prev = ms.get(s.owner);
+    if (prev && prev.uid !== uid) prev.role = 'member';
+    next.role = 'owner'; s.owner = uid;
+  }
+  async deleteSpace(id: string) { this.spaces.delete(id); this.crew.delete(id); this.dropOwner(spaceOwner(id)); }
 }

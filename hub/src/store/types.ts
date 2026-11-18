@@ -1,5 +1,19 @@
 // Storage contracts. Two implementations: memory (tests, local runs) and Firestore (the hub's own named database).
-// Every ledger call is scoped by uid: a user's rows live under users/{uid}/…, and no call can reach another user's.
+// Every ledger call is scoped by its owner: an account's personal ledger lives under users/{uid}/…, a team space's under
+// spaces/{id}/…, and no call can reach another owner's.
+
+/** Whose ledger a call works on: an account's uid (its personal space) or `spaces/<id>` (a team space). A uid never
+ *  contains "/", so the two cannot be confused; the owner string also binds the ledger's data key and every sealed
+ *  document to it. */
+export type Owner = string;
+export const spaceOwner = (id: string): Owner => `spaces/${id}`;
+export const isSpaceOwner = (o: Owner) => o.startsWith('spaces/');
+
+/** Roles in a team space: one owner, equal members, guests who only read. */
+export type SpaceRole = 'owner' | 'member' | 'guest';
+/** A team space. The personal space needs no record: it is the account itself. */
+export interface SpaceRecord { id: string; name: string; owner: string; created: number }
+export interface Membership { uid: string; role: SpaceRole; since: number; by: string }
 
 /** One ledger row: the 22 columns of wbs.csv, under English keys. All values are strings ('' when empty). */
 export interface Row {
@@ -89,6 +103,22 @@ export interface Store {
   /** A credential kept for the account (sealed at rest in the Firestore store), e.g. the host product's session. */
   putSecret(uid: string, name: string, value: unknown): Promise<void>;
   secret<T>(uid: string, name: string): Promise<T | null>;
-  /** Removes the account's ledger and secrets; the Firestore store shreds the account's data key first. */
+  /** Removes the account's ledger and secrets; the Firestore store shreds the account's data key first.
+   *  Team memberships are ended before this by Spaces.deleteAccount, which applies the ownership rules. */
   deleteAccount(uid: string): Promise<void>;
+  // team spaces (ledger calls take `spaces/<id>` as their owner; the calls below keep the membership records)
+  /** Creates the space with its owner as the first member. */
+  createSpace(s: SpaceRecord): Promise<void>;
+  space(id: string): Promise<SpaceRecord | null>;
+  /** The team spaces an account belongs to, with its role in each. */
+  spacesOf(uid: string): Promise<{ id: string; role: SpaceRole }[]>;
+  membership(id: string, uid: string): Promise<Membership | null>;
+  members(id: string): Promise<Membership[]>;
+  /** Adds a member or guest, or changes a role; the account's own list of spaces is kept in step. */
+  putMember(id: string, m: Membership): Promise<void>;
+  removeMember(id: string, uid: string): Promise<void>;
+  /** Hands the space to one of its members in one step: the new owner's role, the old owner's (now member) and the record. */
+  setOwner(id: string, uid: string): Promise<void>;
+  /** Shreds the space's data key, then removes its ledger, its members and their entries in the members' own lists. */
+  deleteSpace(id: string): Promise<void>;
 }

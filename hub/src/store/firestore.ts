@@ -6,28 +6,48 @@
 //   users/{uid}/secrets/{name}         a stored credential (e.g. the host product's session): {enc}
 //   users/{uid}/inbox/{id}             captured raw material: {status, added, ref, expire?, enc}
 //   keys/{uid}                         the account's data key, wrapped by the KMS key; deleting it shreds the account
-// year and code stay readable so queries can select a year or a task; everything else is ciphertext.
+//   users/{uid}/spaces/{id}            the team spaces the account belongs to: {role, since}
+//   spaces/{id}                        a team space: {owner, created, enc} — its name is sealed under the space's own key
+//   spaces/{id}/members/{uid}          {role, since, by}
+//   spaces/{id}/keys/dek               the space's data key, wrapped like an account's; deleting it shreds the space
+//   spaces/{id}/rows|events|inbox|secrets   the team ledger, laid out and sealed exactly like a personal one
+// year and code stay readable so queries can select a year or a task, and memberships (uid, role) so access can be
+// checked; everything else is ciphertext.
 //   oauth_clients/{sha256(client_id)}  registered or metadata-document clients
 //   oauth_requests/{id}, oauth_codes/{hash}, oauth_refresh/{hash}   short-lived OAuth state; `expire` drives a TTL policy
 import { createHash } from 'node:crypto';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
-import type { AuthCode, AuthRequest, InboxItem, LedgerEvent, LedgerTx, OAuthClient, RefreshRecord, Row, RowFilter, Store } from './types.js';
+import {
+  isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
+  type OAuthClient, type RefreshRecord, type Row, type RowFilter, type SpaceRecord, type SpaceRole, type Store,
+} from './types.js';
 import { matches } from './memory.js';
 import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from '../crypto/envelope.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const expire = (ms: number) => Timestamp.fromMillis(ms);
+const SPACE_OWNER_RE = /^spaces\/s_[A-Za-z0-9_-]{22}$/;
 
-/** Wrapped data keys in keys/{uid}; create() fails when the document exists, so two first requests agree on one key. */
+/** The document a ledger owner's collections hang from: users/{uid} for an account, spaces/{id} for a team space. */
+function home(db: Firestore, owner: string) {
+  if (!owner) throw new Error('no ledger owner');
+  if (isSpaceOwner(owner)) { if (!SPACE_OWNER_RE.test(owner)) throw new Error('malformed space'); return db.doc(owner); }
+  if (owner.includes('/')) throw new Error('malformed account id');
+  return db.collection('users').doc(owner);
+}
+
+/** Wrapped data keys: keys/{uid} for an account, spaces/{id}/keys/dek for a team space. create() fails when the document
+ *  exists, so two first requests agree on one key. */
 class FirestoreDekStore implements DekStore {
   constructor(private db: Firestore) {}
-  async get(uid: string) { const d = await this.db.collection('keys').doc(uid).get(); return d.exists ? d.data() as WrappedDek : null; }
-  async create(uid: string, rec: WrappedDek) {
-    try { await this.db.collection('keys').doc(uid).create(rec); return true; }
+  private doc(owner: string) { return isSpaceOwner(owner) ? home(this.db, owner).collection('keys').doc('dek') : this.db.collection('keys').doc(home(this.db, owner).id); }
+  async get(owner: string) { const d = await this.doc(owner).get(); return d.exists ? d.data() as WrappedDek : null; }
+  async create(owner: string, rec: WrappedDek) {
+    try { await this.doc(owner).create(rec); return true; }
     catch (e) { if ((e as { code?: number }).code === 6) return false; throw e; }   // 6 = ALREADY_EXISTS
   }
-  async remove(uid: string) { await this.db.collection('keys').doc(uid).delete(); }
+  async remove(owner: string) { await this.doc(owner).delete(); }
 }
 
 type SealedRowDoc = { year: string; code: string; enc: Sealed };
@@ -60,8 +80,8 @@ export class FirestoreStore implements Store {
     return { year: e.year, code: e.code, at, seq, enc: await this.envelope.seal(uid, `events/${id}`, e) };
   }
 
-  private rowsCol(uid: string) { return this.db.collection('users').doc(uid).collection('rows'); }
-  private eventsCol(uid: string) { return this.db.collection('users').doc(uid).collection('events'); }
+  private rowsCol(uid: string) { return home(this.db, uid).collection('rows'); }
+  private eventsCol(uid: string) { return home(this.db, uid).collection('events'); }
   private rowQuery(uid: string, f?: RowFilter): Query {
     let q: Query = this.rowsCol(uid);
     if (f?.year) q = q.where('year', '==', f.year);   // remaining filters are applied in memory (a ledger is small)
@@ -113,7 +133,7 @@ export class FirestoreStore implements Store {
     });
   }
 
-  private inboxCol(uid: string) { return this.db.collection('users').doc(uid).collection('inbox'); }
+  private inboxCol(uid: string) { return home(this.db, uid).collection('inbox'); }
   async putInbox(uid: string, items: InboxItem[]) {
     await this.envelope.dek(uid);
     const res = await Promise.allSettled(items.map(async it => {
@@ -141,16 +161,74 @@ export class FirestoreStore implements Store {
   }
 
   async putSecret(uid: string, name: string, value: unknown) {
-    await this.db.collection('users').doc(uid).collection('secrets').doc(name).set({ enc: await this.envelope.seal(uid, `secrets/${name}`, value), at: Timestamp.now() });
+    await home(this.db, uid).collection('secrets').doc(name).set({ enc: await this.envelope.seal(uid, `secrets/${name}`, value), at: Timestamp.now() });
   }
   async secret<T>(uid: string, name: string): Promise<T | null> {
-    const d = await this.db.collection('users').doc(uid).collection('secrets').doc(name).get();
+    const d = await home(this.db, uid).collection('secrets').doc(name).get();
     return d.exists ? this.envelope.open<T>(uid, `secrets/${name}`, d.data()!.enc as Sealed) : null;
   }
   /** Shred first (the data becomes unreadable at once), then remove the documents. */
   async deleteAccount(uid: string) {
+    if (isSpaceOwner(uid)) throw new Error('deleteAccount takes an account, not a space');
     await this.envelope.shred(uid);
-    await this.db.recursiveDelete(this.db.collection('users').doc(uid));
+    await this.db.recursiveDelete(home(this.db, uid));
+  }
+
+  // ---------------------------------------------------------------- team spaces
+  private spaceDoc(id: string) { return home(this.db, spaceOwner(id)); }
+  private memberDoc(id: string, uid: string) { return this.spaceDoc(id).collection('members').doc(home(this.db, uid).id); }
+  private indexDoc(uid: string, id: string) { return home(this.db, uid).collection('spaces').doc(this.spaceDoc(id).id); }
+
+  async createSpace(s: SpaceRecord) {
+    const enc = await this.envelope.seal(spaceOwner(s.id), 'meta', { name: s.name });   // makes the space's data key
+    const b = this.db.batch();
+    b.create(this.spaceDoc(s.id), { owner: s.owner, created: s.created, enc });
+    b.set(this.memberDoc(s.id, s.owner), { role: 'owner', since: s.created, by: s.owner });
+    b.set(this.indexDoc(s.owner, s.id), { role: 'owner', since: s.created });
+    await b.commit();
+  }
+  async space(id: string): Promise<SpaceRecord | null> {
+    const d = await this.spaceDoc(id).get(); if (!d.exists) return null;
+    const x = d.data()!, { name } = await this.envelope.open<{ name: string }>(spaceOwner(id), 'meta', x.enc as Sealed);
+    return { id, name, owner: x.owner as string, created: x.created as number };
+  }
+  async spacesOf(uid: string) {
+    const s = await home(this.db, uid).collection('spaces').get();
+    return s.docs.map(d => ({ id: d.id, role: d.get('role') as SpaceRole }));
+  }
+  async membership(id: string, uid: string): Promise<Membership | null> {
+    const d = await this.memberDoc(id, uid).get();
+    return d.exists ? { uid, role: d.get('role'), since: d.get('since'), by: d.get('by') } : null;
+  }
+  async members(id: string): Promise<Membership[]> {
+    const s = await this.spaceDoc(id).collection('members').get();
+    return s.docs.map(d => ({ uid: d.id, role: d.get('role'), since: d.get('since'), by: d.get('by') }));
+  }
+  async putMember(id: string, m: Membership) {
+    const b = this.db.batch();
+    b.set(this.memberDoc(id, m.uid), { role: m.role, since: m.since, by: m.by });
+    b.set(this.indexDoc(m.uid, id), { role: m.role, since: m.since });
+    await b.commit();
+  }
+  async removeMember(id: string, uid: string) {
+    const b = this.db.batch(); b.delete(this.memberDoc(id, uid)); b.delete(this.indexDoc(uid, id)); await b.commit();
+  }
+  async setOwner(id: string, uid: string) {
+    await this.db.runTransaction(async t => {
+      const s = await t.get(this.spaceDoc(id)), next = await t.get(this.memberDoc(id, uid));
+      if (!s.exists || !next.exists) throw new Error(`no member ${uid} in space ${id}`);
+      const prev = s.get('owner') as string;
+      t.update(this.spaceDoc(id), { owner: uid });
+      t.update(this.memberDoc(id, uid), { role: 'owner' }); t.set(this.indexDoc(uid, id), { role: 'owner' }, { merge: true });
+      if (prev !== uid) { t.update(this.memberDoc(id, prev), { role: 'member' }); t.set(this.indexDoc(prev, id), { role: 'member' }, { merge: true }); }
+    });
+  }
+  /** Shred first (the team ledger becomes unreadable at once), then drop the members' entries and the documents. */
+  async deleteSpace(id: string) {
+    const ms = await this.members(id);
+    await this.envelope.shred(spaceOwner(id));
+    const b = this.db.batch(); ms.forEach(m => b.delete(this.indexDoc(m.uid, id))); await b.commit();
+    await this.db.recursiveDelete(this.spaceDoc(id));
   }
 
   async putClient(c: OAuthClient) { await this.db.collection('oauth_clients').doc(sha(c.client_id)).set(c); }
