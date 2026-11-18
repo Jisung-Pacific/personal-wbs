@@ -30,6 +30,13 @@ export interface PlanItem {
   year: string; code: string; scope: string; deliverable: string; done: string;
   depends_on: string[]; owners: string[]; status: string; start: string; due: string;
   updated: number; by: string; log: { at: number; by: string; via?: string; change: string }[];
+  /** The team intent the item serves (execution WBS 4.1); an item without one inherits its nearest parent's. */
+  intent?: string;
+}
+/** One of a team's intents (execution WBS 4.1; the charter's 의도 정렬: why, what, how), at most five in force, ranked.
+ *  Plan items point at intents; the alignment shows where the shared work actually goes against them. */
+export interface Intent {
+  id: string; why: string; what: string; how: string; rank: number; status: 'active' | 'retired'; updated: number; by: string;
 }
 /** The fields of a personal row a person may share with a team, field by field. `title` is the task text up to its
  *  first ':' or ';' (or its first 50 characters) and `links` the http(s) links in the row (its deliverables); the rest
@@ -183,6 +190,9 @@ export interface Store {
   /** Freezes everything one person shares with a space (on leaving it or becoming a guest): the copies stay and stop
    *  following their rows. Returns how many. */
   freezeSharedBy(id: string, uid: string, at: number): Promise<number>;
+  /** A team space's intents (4.1), and the same read-and-write-atomically pattern as the plan. */
+  intents(id: string): Promise<Intent[]>;
+  intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T>;
   // the view log (execution WBS 3.5), in the viewed person's own space, one document per day
   /** Merges entries into the person's log for `date` (same reader, kind, agent, space and what: counts add up, first and
    *  last widen, rows keep the most). `keepUntil`: when the day may be dropped (Firestore TTL). */

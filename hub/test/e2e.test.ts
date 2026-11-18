@@ -219,6 +219,46 @@ test('team space over MCP and REST: agents list it, write and read its plan; a g
   } finally { await close(); }
 });
 
+test('team intents over MCP and REST: written with the plan, set against the shared work in the plan view, the brief and the team screen; not for guests', async () => {
+  const { base, store, close } = await boot();
+  try {
+    const spaces = new Spaces(store), s = await spaces.create(person('u_j'), '연구실');
+    await spaces.setMember(person('u_j'), s.id, 'u_m', 'member');
+    await spaces.setMember(person('u_j'), s.id, 'u_g', 'guest', ['2026:4.3']);
+    await spaces.proposeCharter(person('u_j'), s.id, ['공유는 필드 단위다.']);
+    await spaces.consentCharter(person('u_m'), s.id, 1, true);
+    const c = await mcp(base, (await connect(base, { uid: 'u_j', clientName: 'Claude' })).access_token);
+    const w = json(await c.callTool({ name: 'wbs_plan_put', arguments: { space: s.id, intents: [{ why: '팀 작업을 한 원장에서 본다', how: '필드 단위 공유' }, { why: '마감을 지킨다' }] } }));
+    assert.deepEqual(w.intents.created, ['i1', 'i2']);
+    json(await c.callTool({ name: 'wbs_plan_put', arguments: { space: s.id, items: [
+      { year: '2026', code: '4', scope: '제품', intent: 'i1' }, { year: '2026', code: '4.3', scope: '서비스 개발' }, { year: '2026', code: '5', scope: '일정', intent: 'i2' }] } }));
+    const r = json(await c.callTool({ name: 'wbs_add', arguments: { area: '4 창업·제품', package: '4.3 서비스 개발', task: '공간 전환 API 구현', start: '2026-11-18', status: '진행 중' } }));
+    json(await c.callTool({ name: 'wbs_share', arguments: { year: '2026', code: r.created.code, space: s.id, plan: '4.3' } }));
+    const a = json(await c.callTool({ name: 'wbs_plan', arguments: { space: s.id, view: 'alignment' } }));
+    assert.deepEqual(a.intents.map((i: { id: string; work: number; share: number; people: string[]; flags: string[] }) => [i.id, i.work, i.share, i.people, i.flags]),
+      [['i1', 1, 1, ['u_j'], []], ['i2', 0, 0, [], ['no_work']]]);
+    assert.ok(a.lines[0].startsWith('1순위 팀 작업을 한 원장에서 본다'));
+    const b = json(await c.callTool({ name: 'wbs_brief', arguments: { space: s.id } }));
+    assert.deepEqual(b.alignment.intents.map((i: { id: string }) => i.id), ['i1', 'i2'], 'the team brief carries the alignment');
+    assert.equal('alignment' in json(await c.callTool({ name: 'wbs_brief', arguments: {} })), false, 'the personal brief does not');
+    assert.equal(json(await c.callTool({ name: 'wbs_team', arguments: { space: s.id } })).alignment.total_work, 1);
+    await c.close();
+    // a guest's agent: no alignment anywhere, and the brief still answers
+    const g = await mcp(base, (await connect(base, { uid: 'u_g', clientName: 'ChatGPT' })).access_token);
+    const ga = await g.callTool({ name: 'wbs_plan', arguments: { space: s.id, view: 'alignment' } });
+    assert.equal(ga.isError, true); assert.equal(json(ga).error, 'forbidden');
+    assert.equal('alignment' in json(await g.callTool({ name: 'wbs_brief', arguments: { space: s.id } })), false);
+    assert.equal(json(await g.callTool({ name: 'wbs_team', arguments: { space: s.id } })).alignment, null);
+    await g.close();
+    // REST: the same views by query parameter
+    const t = await connect(base, { uid: 'u_m', resource: `${base}/v1`, scope: 'wbs.read', clientName: 'ChatGPT Actions' });
+    const h = { authorization: `Bearer ${t.access_token}` };
+    const ra = await (await fetch(`${base}/v1/plan?space=${s.id}&view=alignment`, { headers: h })).json();
+    assert.deepEqual(ra.by_person, [{ uid: 'u_j', rows: 1, by_intent: { i1: 1, i2: 0 }, off_intent: 0 }]);
+    assert.equal((await (await fetch(`${base}/v1/brief?space=${s.id}`, { headers: h })).json()).alignment.total_work, 1);
+  } finally { await close(); }
+});
+
 test('the real ledger round-trips byte for byte', { skip: !LEDGER }, async () => {
   const store = new MemoryStore(), ledger = new Ledger(store);
   const wbs = readFileSync(LEDGER, 'utf8'), events = EVENTS ? readFileSync(EVENTS, 'utf8') : undefined;

@@ -8,7 +8,7 @@ import { InboxAddInput, InboxListInput, InboxMarkInput, type Inbox } from './wbs
 import { agent } from './wbs/access.js';
 import type { Spaces } from './wbs/spaces.js';
 import type { Store } from './store/types.js';
-import { PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
+import { IntentInput, PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
 import { ViewsInput, type Views } from './wbs/views.js';
 import { teamOverview } from './wbs/team.js';
 
@@ -61,10 +61,10 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
     }, async a => run(() => spaces.charter(caller, a.space)));
     if (plans) server.registerTool('wbs_plan', {
       title: 'Read a team plan against the actual work',
-      description: 'The team space\'s plan (its project WBS: scope, deliverable, done criterion, prerequisites, owners, planned dates) set against the work members linked to it from their own ledgers: per item the shared rows, how many are done, the state and dates they show, days late against the due date, and flags (late, in progress with no work, plan done with work open, work done with the plan open, work started on a parked item, waiting). view "items" gives the plan items with their change log instead. Members see who did the work; guests see their projects only.',
-      inputSchema: { space: z.string().describe('A team space id from wbs_spaces'), view: z.enum(['actual', 'items']).optional().describe('actual (default): plan vs actual; items: the plan items'), year: z.string().regex(/^\d{4}$/).optional() },
+      description: 'The team space\'s plan (its project WBS: scope, deliverable, done criterion, prerequisites, owners, planned dates) set against the work members linked to it from their own ledgers: per item the shared rows, how many are done, the state and dates they show, days late against the due date, and flags (late, in progress with no work, plan done with work open, work done with the plan open, work started on a parked item, waiting). view "items" gives the plan items with their change log instead; view "alignment" sets the team\'s intents (why, what, how, ranked) against where the shared work actually goes: per intent its plan items and work share, flags (no plan, no work, less work than a lower-ranked intent), plan items serving no intent, and per person (owners and members see each other\'s, symmetrically). Members see who did the work; guests see their projects only and no alignment.',
+      inputSchema: { space: z.string().describe('A team space id from wbs_spaces'), view: z.enum(['actual', 'items', 'alignment']).optional().describe('actual (default): plan vs actual; items: the plan items; alignment: intents vs work'), year: z.string().regex(/^\d{4}$/).optional() },
       annotations: ro,
-    }, async a => run(() => a.view === 'items' ? plans.list(caller, a.space, a.year) : plans.actual(caller, a.space, a.year)));
+    }, async a => run(() => a.view === 'items' ? plans.list(caller, a.space, a.year) : a.view === 'alignment' ? plans.align(caller, a.space) : plans.actual(caller, a.space, a.year)));
     if (plans) server.registerTool('wbs_shared', {
       title: 'List what you share with teams',
       description: 'Your rows that are linked to team plan items: which plan item each serves, which fields the team sees, and whether the team still receives them.',
@@ -95,9 +95,13 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
 
     server.registerTool('wbs_brief', {
       title: 'Brief for planning and advice',
-      description: 'Start here to plan, advise or review: one compact picture of the ledger — status counts, six-month flow, where the effort went, open, overdue and soon-due work, what waits on others, work-style indicators (pace, time to finish, work in progress, weekday rhythm, area mix) and the signals worth acting on. About a thousand tokens; then drill down with wbs_search or wbs_get.',
+      description: 'Start here to plan, advise or review: one compact picture of the ledger — status counts, six-month flow, where the effort went, open, overdue and soon-due work, what waits on others, work-style indicators (pace, time to finish, work in progress, weekday rhythm, area mix) and the signals worth acting on. In a team space it also sets the team\'s intents against where the shared work goes (alignment; owners and members). About a thousand tokens; then drill down with wbs_search or wbs_get.',
       inputSchema: { year: z.string().regex(/^\d{4}$/).optional().describe('Year for the counts; defaults to the current year (flows and work style use the last 90 days)'), ...space }, annotations: ro,
-    }, async a => run(async () => ledger.brief(await at(a.space, 'read'), a.year)));
+    }, async a => run(async () => {   // a team space's brief also sets the team's intents against the work (4.1)
+      const b = await ledger.brief(await at(a.space, 'read'), a.year);
+      if (!plans || !a.space || a.space === 'personal') return b;
+      try { return { ...b, alignment: await plans.align(caller, a.space) }; } catch (e) { if (e instanceof LedgerError) return b; throw e; }
+    }));
 
     server.registerTool('wbs_summary', {
       title: 'Summarize the ledger',
@@ -133,8 +137,8 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
     }, async ({ space: s, ...a }) => run(async () => ledger.update(actor, a, (await at(s, 'write')).owner)));
     if (plans) server.registerTool('wbs_plan_put', {
       title: 'Write a team plan',
-      description: 'Add items to a team space\'s plan or change them (owners and members). Codes are the plan\'s own (1, 1.1, 1.1.1) and permanent; a child needs its parent; give only the fields that change; park an item with status 백로그 instead of deleting it. Up to 200 items per call, applied in code order.',
-      inputSchema: { space: z.string().describe('A team space id from wbs_spaces'), items: z.array(PlanItemInput).min(1).max(200), memo: z.string().max(300).optional() },
+      description: 'Add items to a team space\'s plan or change them (owners and members). Codes are the plan\'s own (1, 1.1, 1.1.1) and permanent; a child needs its parent; give only the fields that change; park an item with status 백로그 instead of deleting it. Up to 200 items per call, applied in code order. intents sets the team\'s intents (why, what, how; at most five active, ranked; retire rather than delete), written before the items, which point at them with intent.',
+      inputSchema: { space: z.string().describe('A team space id from wbs_spaces'), items: z.array(PlanItemInput).max(200).optional(), intents: z.array(IntentInput).max(10).optional(), memo: z.string().max(300).optional() },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ space: s, ...a }) => run(() => plans.put(caller, s, a)));
     if (plans) server.registerTool('wbs_share', {

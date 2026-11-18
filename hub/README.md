@@ -63,6 +63,14 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   linked rows (rolled up to parents), how many are done, their state and dates, days late against the due date, and
   flags (late, in progress with no work, plan done with work open, work done with the plan open, work on a parked item,
   waiting on others); members see who did the work, guests and the team's agent see counts.
+- **Intent alignment**: the team writes down why it works — at most five active intents, each a why, what and how,
+  ranked, retired rather than deleted (`wbs_plan_put` with `intents`) — and plan items point at the intent they serve;
+  a child inherits its parent's. `wbs_plan` with `view: "alignment"` (REST `GET /v1/plan?view=alignment`) sets each
+  intent against the shared work under its items: plan items and work rows (done of all), its share of the team's work,
+  who worked on it, and flags for an intent with no plan, a plan but no work, or at least 20 points less of the work than
+  a lower-ranked intent; then the plan items that serve no intent and the work on them, and per person (owners and
+  members see each other's, as the charter says; the team's agent sees counts; guests do not see it). A team space's
+  `wbs_brief` and `wbs_team` carry it too.
 - **View log**: who read a person's shared rows is noted in that person's own space (the charter: views are visible to
   the one viewed) — the reader's account and role, the agent it read through or the team's own agent, the space, how
   many of the person's rows one read carried, and when (first and last time each day, how often). Only the person reads
@@ -70,7 +78,7 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   space, and days expire after 180 days (Firestore TTL on `views`).
 - **Team screen**: `wbs_team` (REST `GET /v1/team`) returns what a page shows when someone switches to a team space, in
   one call and within the permission table: the space and the caller's role, the charter in force and any open
-  proposal, the members (owners and members only), the plan against the actual work, the caller's own shared rows and
+  proposal, the members (owners and members only), the plan against the actual work, the intent alignment (not for guests), the caller's own shared rows and
   who read them. The dashboard's space switcher calls it through the person's own claude.ai connector to the hub.
 - **Tokens**: ES256 JWT access tokens (1 h) bound to one resource (`/mcp`, `/v1` or the hub); refresh tokens (30 days)
   rotate and a reused one revokes the grant; codes (5 min) and parked requests (10 min) work once. Only SHA-256 hashes

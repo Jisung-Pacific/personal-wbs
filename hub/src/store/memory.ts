@@ -2,7 +2,7 @@
 // per-user transactions (a promise chain per uid serialises them, as Firestore's transactions would).
 import {
   spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
-  type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store, type ViewEntry,
+  type Intent, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store, type ViewEntry,
 } from './types.js';
 
 /** The key a view log merges on, and the merge itself (shared with the Firestore store). */
@@ -138,7 +138,7 @@ export class MemoryStore implements Store {
     next.role = 'owner'; s.owner = uid;
   }
   async deleteSpace(id: string) {
-    this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.dropOwner(spaceOwner(id));
+    this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.intentOf.delete(id); this.dropOwner(spaceOwner(id));
   }
 
   // the team plan, people's links to it and the shared fields a space holds
@@ -169,6 +169,19 @@ export class MemoryStore implements Store {
     m.set(w.id, structuredClone(w));
   }
   async removeShared(id: string, workId: string) { this.sharedOf.get(id)?.delete(workId); }
+  private intentOf = new Map<string, Map<string, Intent>>();
+  async intents(id: string) { return [...(this.intentOf.get(id)?.values() ?? [])].map(i => structuredClone(i)); }
+  async intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T> {
+    const lock = 'intents|' + id, prev = this.locks.get(lock) || Promise.resolve();
+    const run = prev.then(async () => {
+      const { put, out } = await fn(await this.intents(id));
+      let m = this.intentOf.get(id); if (!m) { m = new Map(); this.intentOf.set(id, m); }
+      for (const i of put) m.set(i.id, structuredClone(i));
+      return out;
+    });
+    this.locks.set(lock, run.catch(() => undefined));
+    return run;
+  }
   private viewLog = new Map<string, Map<string, Record<string, ViewEntry>>>();
   async logViews(uid: string, date: string, entries: ViewEntry[], _keepUntil?: number) {   // no expiry in memory
     let m = this.viewLog.get(uid); if (!m) { m = new Map(); this.viewLog.set(uid, m); }

@@ -13,6 +13,7 @@
 //   spaces/{id}/charter/{version}      {status, by, at, activeAt?, closedAt?, consents: {uid: {agree, at}}, enc} — lines and note sealed
 //   spaces/{id}/rows|events|inbox|secrets   the team ledger, laid out and sealed exactly like a personal one
 //   spaces/{id}/plan/{year}_{code}     one item of the team plan: {year, code, enc} — scope, deliverable, owners, dates sealed
+//   spaces/{id}/intents/{iid}          one team intent (why, what, how, rank, status): {enc}
 //   spaces/{id}/shared/{workId}        the shared fields of one member's linked row: {uid, frozen?, enc} — plan code and fields sealed
 //   users/{uid}/links/{year}_{code}    a personal row's link to a team plan item: {year, code, enc} — space, plan, fields sealed
 //   users/{uid}/views/{YYYY-MM-DD}     who read the person's shared rows that day: {date, expire, enc} — the entries sealed
@@ -25,7 +26,7 @@ import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import {
   isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
-  type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
+  type Intent, type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
   type ViewEntry,
 } from './types.js';
 import { matches, mergeViews } from './memory.js';
@@ -312,6 +313,23 @@ export class FirestoreStore implements Store {
     return live.length;
   }
 
+  private intentsCol(id: string) { return this.spaceDoc(id).collection('intents'); }
+  private async openIntent(id: string, docId: string, d: Record<string, unknown>): Promise<Intent> {
+    return { id: docId, ...await this.envelope.open<Omit<Intent, 'id'>>(spaceOwner(id), `intents/${docId}`, d.enc as Sealed) };
+  }
+  async intents(id: string) {
+    const s = await this.intentsCol(id).get();
+    return Promise.all(s.docs.map(d => this.openIntent(id, d.id, d.data())));
+  }
+  async intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T> {
+    await this.envelope.dek(spaceOwner(id));
+    return this.db.runTransaction(async t => {
+      const s = await t.get(this.intentsCol(id));
+      const { put, out } = await fn(await Promise.all(s.docs.map(d => this.openIntent(id, d.id, d.data()))));
+      for (const i of put) { const { id: iid, ...body } = i; t.set(this.intentsCol(id).doc(iid), { enc: await this.envelope.seal(spaceOwner(id), `intents/${iid}`, body) }); }
+      return out;
+    });
+  }
   private viewsCol(uid: string) { return home(this.db, uid).collection('views'); }
   async logViews(uid: string, date: string, entries: ViewEntry[], keepUntil: number) {
     await this.envelope.dek(uid);   // KMS outside the retryable transaction; sealing inside is local

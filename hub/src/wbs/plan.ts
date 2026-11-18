@@ -14,7 +14,7 @@
 //     with open work, work done with the plan still open, work started on a parked item, waiting on others).
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { SHARE_FIELDS, type PlanItem, type PlanLink, type Row, type ShareField, type SharedWork, type Store } from '../store/types.js';
+import { SHARE_FIELDS, type Intent, type PlanItem, type PlanLink, type Row, type ShareField, type SharedWork, type Store } from '../store/types.js';
 import { DATE_RE, STATUSES, codeKey, todayKst } from './model.js';
 import { LedgerError } from './service.js';
 import { callerUid, type Caller } from './access.js';
@@ -37,11 +37,21 @@ export const PlanItemInput = z.object({
   owners: z.array(z.string().min(1).max(40)).max(6).optional().describe('Who carries it: people, agents or lanes, as the team names them'),
   status: z.enum(STATUSES).optional(),
   start: date.optional(), due: date.optional(),
+  intent: z.string().regex(/^(i\d+)?$/).optional().describe('The team intent it serves (an id from the intents); "" clears; children inherit their parent\'s'),
+});
+export const MAX_INTENTS = 5;
+export const IntentInput = z.object({
+  id: z.string().regex(/^i\d+$/).optional().describe('An existing intent to change; omit to add one'),
+  why: z.string().min(1).max(160).optional().describe('Why the team does this (needed when new)'),
+  what: z.string().max(160).optional().describe('What it delivers'), how: z.string().max(160).optional().describe('How the team works on it'),
+  rank: z.number().int().min(1).max(9).optional().describe('Priority, 1 first'),
+  status: z.enum(['active', 'retired']).optional().describe('Retire instead of deleting; at most five are active'),
 });
 export const PlanPutInput = z.object({
-  items: z.array(PlanItemInput).min(1).max(200).describe('New items, or changes to existing ones (only the fields given change)'),
+  items: z.array(PlanItemInput).max(200).optional().describe('New items, or changes to existing ones (only the fields given change)'),
+  intents: z.array(IntentInput).max(MAX_INTENTS * 2).optional().describe('The team\'s intents (why, what, how), written before the items'),
   memo: z.string().max(300).optional().describe('Why it changed; kept in each changed item\'s log'),
-});
+}).refine(x => (x.items?.length ?? 0) + (x.intents?.length ?? 0) > 0, 'Give items, intents, or both');
 export const ShareInput = z.object({
   year: z.string().regex(YEAR), code: z.string().regex(/^\d+(\.\d+)+$/).describe('A row of your own ledger'),
   space: z.string().describe('The team space id (wbs_spaces)'),
@@ -144,6 +154,49 @@ export function planActual(items: PlanItem[], work: SharedWork[], today: string,
   };
 }
 
+// ---------------------------------------------------------------- intent alignment (4.1)
+export type IntentFlag = 'no_plan' | 'no_work' | 'focus_drift';
+const INTENT_FLAG_KO: Record<IntentFlag, string> = { no_plan: '계획 없음', no_work: '작업 없음', focus_drift: '순위보다 작업이 적음' };
+
+/** Each active intent (by rank) with the plan items that serve it (an item without an intent inherits its nearest
+ *  parent's) and the shared work under those items: how much, done, by whom, and its share of all shared work. Flags:
+ *  an intent with no plan, with plan but no work, or getting at least 20 points less of the work than a lower-ranked
+ *  one. Then the plan items that serve no intent and the work on them. `named`: per person, for owners and members. */
+export function intentAlignment(items: PlanItem[], intents: Intent[], work: SharedWork[], named: boolean) {
+  const active = intents.filter(i => i.status === 'active').sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id)), live = new Set(active.map(i => i.id));
+  const byKey = new Map(items.map(p => [planKey(p.year, p.code), p]));
+  const eff = (p: PlanItem | undefined): string => {
+    if (!p) return '';
+    if (p.intent) return p.intent;
+    for (const a of ancestorsOf(p.code).reverse()) { const q = byKey.get(planKey(p.year, a)); if (q?.intent) return q.intent; }
+    return '';
+  };
+  const leaves = items.filter(p => !items.some(o => o.year === p.year && o.code.startsWith(p.code + '.')));
+  const of = (w: SharedWork) => { const i = eff(byKey.get(w.plan)); return live.has(i) ? i : ''; };
+  const total = work.length, pct = (n: number) => total ? Math.round(n / total * 100) : 0;   // whole percents: no float drift in the comparison
+  const rows = active.map(i => {
+    const its = leaves.filter(p => eff(p) === i.id), ws = work.filter(w => of(w) === i.id), people = [...new Set(ws.map(w => w.uid))].sort();
+    return { id: i.id, rank: i.rank, why: i.why, what: i.what, how: i.how, items: its.length, items_done: its.filter(p => p.status === '완료').length,
+      work: ws.length, work_done: ws.filter(w => w.fields.status === '완료').length, share: pct(ws.length) / 100,
+      people: named ? people : people.length, flags: [] as IntentFlag[] };
+  });
+  rows.forEach((r, k) => {
+    if (!r.items) r.flags.push('no_plan'); else if (!r.work) r.flags.push('no_work');
+    if (rows.slice(k + 1).some(o => pct(o.work) >= pct(r.work) + 20)) r.flags.push('focus_drift');
+  });
+  const unanchored = leaves.filter(p => !live.has(eff(p))).sort(byCode).map(p => `${p.year} ${p.code}`);
+  const off = work.filter(w => !of(w)).length;
+  const byPerson = named ? [...new Set(work.map(w => w.uid))].sort().map(uid => {
+    const ws = work.filter(w => w.uid === uid);
+    return { uid, rows: ws.length, by_intent: Object.fromEntries(active.map(i => [i.id, ws.filter(w => of(w) === i.id).length])), off_intent: ws.filter(w => !of(w)).length };
+  }) : undefined;
+  const lines = [
+    ...rows.map(r => `${r.rank}순위 ${r.why} — 계획 ${r.items}개 · 작업 ${r.work_done}/${r.work}행(${Math.round(r.share * 100)}%) · ${Array.isArray(r.people) ? r.people.length : r.people}명${r.flags.length ? ' | ' + r.flags.map(f => INTENT_FLAG_KO[f]).join(', ') : ''}`),
+    ...(unanchored.length || off ? [`의도 없는 계획 ${unanchored.length}개${unanchored.length ? ` (${unanchored.slice(0, 6).map(x => x.split(' ')[1]).join(', ')}${unanchored.length > 6 ? ' …' : ''})` : ''} · 의도 밖 작업 ${off}행`] : []),
+  ];
+  return { intents: rows, unanchored, off_intent_work: off, total_work: total, ...(byPerson ? { by_person: byPerson } : {}), lines };
+}
+
 // ---------------------------------------------------------------- the service
 export class Plans {
   constructor(private store: Store, private spaces: Spaces, private views?: Views) {
@@ -180,7 +233,10 @@ export class Plans {
     await this.spaces.enter(caller, space, 'plan.write');
     const input = PlanPutInput.parse(raw), who = callerUid(caller)!, now = Date.now(), thisYear = todayKst().slice(0, 4);
     const via = caller.kind === 'agent' ? { via: caller.client } : {};   // who recorded it: the person, and the agent acting for them
-    const batch = input.items.map(it => ({ ...it, year: it.year || thisYear })).sort(byCode);
+    const intents = input.intents?.length ? await this.writeIntents(space, input.intents, who) : undefined;
+    const live = new Set((await this.store.intents(space)).filter(i => i.status === 'active').map(i => i.id));
+    const batch = (input.items ?? []).map(it => ({ ...it, year: it.year || thisYear })).sort(byCode);
+    if (!batch.length) return { space, created: [] as string[], changed: [] as string[], unchanged: 0, intents };
     const seen = new Set<string>();
     for (const it of batch) { const k = planKey(it.year, it.code); if (seen.has(k)) throw new LedgerError('invalid', `Plan item ${it.year} ${it.code} appears twice`); seen.add(k); }
     return this.store.planTx(space, async cur => {
@@ -202,6 +258,8 @@ export class Plans {
         set('depends_on', it.depends_on && [...new Set(it.depends_on)].sort((a, b) => codeKey(a).localeCompare(codeKey(b))));
         set('owners', it.owners && [...new Set(it.owners.map(o => o.replace(/\s+/g, ' ').trim()).filter(Boolean))]);
         set('status', it.status); set('start', it.start); set('due', it.due);
+        if (it.intent && !live.has(it.intent)) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code}: intent ${it.intent} is not an active intent`);
+        if (it.intent !== undefined && (p.intent ?? '') !== it.intent) { changes.push(`의도 ${p.intent || '없음'} → ${it.intent || '없음'}`); p.intent = it.intent; }
         if (p.start && p.due && p.due < p.start) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code}: due is before start`);
         if (p.depends_on.includes(p.code)) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code} cannot depend on itself`);
         if (old && !changes.length) continue;
@@ -212,8 +270,40 @@ export class Plans {
       for (const p of put) for (const d of p.depends_on) {
         if (!all.has(planKey(p.year, d))) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code} depends on ${d}, which is not in the plan`);
       }
-      return { put, out: { space, created, changed, unchanged: batch.length - created.length - changed.length } };
+      return { put, out: { space, created, changed, unchanged: batch.length - created.length - changed.length, intents } };
     });
+  }
+
+  /** Adds or changes intents: a new one gets the next id and needs a why; at most five are active; retired ones stay.
+   *  Written before the items (its own transaction), so a later item error leaves the intents in place; a retry is safe. */
+  private async writeIntents(space: string, list: z.infer<typeof IntentInput>[], who: string) {
+    return this.store.intentsTx(space, async cur => {
+      const all = new Map(cur.map(i => [i.id, i])), put: Intent[] = [], created: string[] = [], changed: string[] = [];
+      let next = Math.max(0, ...cur.map(i => Number(i.id.slice(1)))) + 1;
+      for (const x of list) {
+        // the same why sent again (a retried call) changes that intent instead of adding a second one
+        const old = x.id ? all.get(x.id) : x.why ? [...all.values()].find(v => v.status === 'active' && v.why === clean(x.why)) : undefined;
+        if (x.id && !old) throw new LedgerError('not_found', `No intent ${x.id}`);
+        if (!old && !x.why) throw new LedgerError('invalid', 'A new intent needs a why');
+        const i: Intent = old ? { ...old } : { id: `i${next++}`, why: '', what: '', how: '', rank: [...all.values()].filter(v => v.status === 'active').length + 1, status: 'active', updated: 0, by: who };
+        for (const f of ['why', 'what', 'how'] as const) if (x[f] !== undefined) i[f] = clean(x[f])!;
+        if (x.rank !== undefined) i.rank = x.rank;
+        if (x.status) i.status = x.status;
+        i.updated = Date.now(); i.by = who;
+        all.set(i.id, i); put.push(i); (old ? changed : created).push(i.id);
+      }
+      if ([...all.values()].filter(v => v.status === 'active').length > MAX_INTENTS) throw new LedgerError('invalid', `At most ${MAX_INTENTS} intents are active; retire one first`);
+      return { put, out: { created, changed } };
+    });
+  }
+
+  /** Intent alignment (execution WBS 4.1): the team's intents against where the shared work actually goes. Shared among
+   *  the owner and members, symmetrically (the charter); the team's agent reads it without names; guests do not. */
+  async align(caller: Caller, space: string) {
+    const e = await this.spaces.enter(caller, space, 'plan.read');
+    if (e.relation === 'guest') throw new LedgerError('forbidden', 'Intent alignment is shared among the team\'s owner and members');
+    const [items, intents, work] = await Promise.all([this.store.plan(space), this.store.intents(space), this.store.shared(space)]);
+    return { space, as_of: todayKst(), ...intentAlignment(items, intents, work, e.named) };
   }
 
   /** A person links one of their own rows to a plan item and chooses what the team sees of it; linking again changes

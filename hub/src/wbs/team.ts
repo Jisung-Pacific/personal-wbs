@@ -23,6 +23,7 @@ export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, v
   const mine = uid ? (await plans.mine(caller)).filter(l => l.space === space) : [];
   const seen = uid && views ? await views.mine(caller, { space, days: 30 }) : null;
   const { space: _s, ...pva } = plan;
+  const alignment = e.relation === 'guest' ? null : await plans.align(caller, space).then(({ space: _x, ...a }) => a);
   return {
     space: { id: s.id, name: s.name, role: e.relation, ...(e.projects ? { projects: e.projects } : {}) },
     charter: charter && { in_force: charter.in_force?.version ?? null,   // getting here means the caller agreed to it (the gate)
@@ -30,6 +31,7 @@ export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, v
         needs_my_answer: !!uid && Array.isArray(charter.proposal.waiting) && (charter.proposal.waiting as string[]).includes(uid) } : null },
     members: members && members.map(m => ({ uid: m.uid, role: m.role, since: m.since, ...(m.projects ? { projects: m.projects } : {}) })),
     plan: pva,
+    alignment,
     my_shared: mine,
     my_views: seen && { totals: seen.totals, lines: seen.lines },
   };

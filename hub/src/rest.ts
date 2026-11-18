@@ -37,7 +37,11 @@ export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?:
     q: req.query.q as string | undefined, limit: req.query.limit ? Number(req.query.limit) : undefined })));
   r.get('/rows/:year/:code', need('wbs.read'), (req: Authed, res) => send(res, async () => ledger.get(await at(req, 'read'), String(req.params.year), String(req.params.code))));
   r.get('/packages/:year', need('wbs.read'), (req: Authed, res) => send(res, async () => ledger.packages(await at(req, 'read'), String(req.params.year))));
-  r.get('/brief', need('wbs.read'), (req: Authed, res) => send(res, async () => ledger.brief(await at(req, 'read'), req.query.year as string | undefined)));
+  r.get('/brief', need('wbs.read'), (req: Authed, res) => send(res, async () => {
+    const b = await ledger.brief(await at(req, 'read'), req.query.year as string | undefined), s = typeof req.query.space === 'string' ? req.query.space : '';
+    if (!plans || !s || s === 'personal') return b;
+    try { return { ...b, alignment: await plans.align(agent(req.actor!.uid, req.actor!.clientName, req.scopes || []), s) }; } catch (e) { if (e instanceof LedgerError) return b; throw e; }
+  }));
   r.get('/summary', need('wbs.read'), (req: Authed, res) => send(res, async () => ledger.summary(await at(req, 'read'), req.query.year as string | undefined)));
   r.get('/export', need('wbs.read'), (req: Authed, res) => send(res, async () => ledger.exportCsv(await at(req, 'read'), req.query.order === 'oldest' ? 'oldest' : 'newest')));
   r.post('/rows', need('wbs.write'), (req: Authed, res) => send(res, async () => ledger.add(req.actor!, req.body, (await at(req, 'write')).owner)));
@@ -48,7 +52,8 @@ export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?:
   if (plans) {   // the team plan against the actual work, and sharing one's own rows with it (execution WBS 3.4)
     const who = (req: Authed) => agent(req.actor!.uid, req.actor!.clientName, req.scopes || []);
     const sp = (req: Authed) => String(req.query.space || ''), yr = (req: Authed) => typeof req.query.year === 'string' ? req.query.year : undefined;
-    r.get('/plan', need('wbs.read'), (req: Authed, res) => send(res, () => req.query.view === 'items' ? plans.list(who(req), sp(req), yr(req)) : plans.actual(who(req), sp(req), yr(req))));
+    r.get('/plan', need('wbs.read'), (req: Authed, res) => send(res, () => req.query.view === 'items' ? plans.list(who(req), sp(req), yr(req))
+      : req.query.view === 'alignment' ? plans.align(who(req), sp(req)) : plans.actual(who(req), sp(req), yr(req))));
     r.post('/plan', need('wbs.write'), (req: Authed, res) => send(res, () => plans.put(who(req), sp(req), req.body)));
     r.get('/share', need('wbs.read'), (req: Authed, res) => send(res, () => plans.mine(who(req))));
     if (store) r.get('/team', need('wbs.read'), (req: Authed, res) => send(res, () => teamOverview(store, spaces, plans, views, who(req), sp(req))));
@@ -90,7 +95,7 @@ export function openapi(cfg: Config, version: string) {
       '/charter': { get: { operationId: 'getCharter', summary: 'A team space\'s charter: the version in force, an open proposal and who has answered, every version so far', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }], responses: { 200: { description: 'Charter' } } } },
       '/plan': {
         get: { operationId: 'planVsActual', summary: 'A team plan against the work members linked to it (view=items: the plan items with their change log)', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' },
-          { name: 'view', in: 'query', required: false, schema: { type: 'string', enum: ['actual', 'items'] } }, { name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Plan vs actual' } } },
+          { name: 'view', in: 'query', required: false, schema: { type: 'string', enum: ['actual', 'items', 'alignment'] } }, { name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Plan vs actual' } } },
         post: { operationId: 'putPlan', summary: 'Add or change team plan items (owners and members; permanent codes, parents first, only given fields change)', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['items'], properties: { memo: { type: 'string' }, items: { type: 'array', maxItems: 200, items: { type: 'object', required: ['code'], properties: {
             code: { type: 'string' }, year: { type: 'string' }, scope: { type: 'string' }, deliverable: { type: 'string' }, done: { type: 'string' },
@@ -109,7 +114,7 @@ export function openapi(cfg: Config, version: string) {
         parameters: [{ name: 'days', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 180 } }, { name: 'space', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'View log' } } } },
       '/share/{year}/{code}': { delete: { operationId: 'unshareRow', summary: 'Withdraw a row of yours from the team plan it serves', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }, { name: 'code', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Unlinked' } } } },
       '/spaces': { get: { operationId: 'listSpaces', summary: 'The personal space and the team spaces the user belongs to, with the user\'s role; pass a team id as `space` to other calls', responses: { 200: { description: 'Spaces' } } } },
-      '/brief': { get: { operationId: 'brief', summary: 'Compact picture for planning and advice: status, flow, focus, open and due work, waiting items, work style, signals', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Brief' } } } },
+      '/brief': { get: { operationId: 'brief', summary: 'Compact picture for planning and advice: status, flow, focus, open and due work, waiting items, work style, signals; in a team space also the intents against the work (alignment)', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Brief' } } } },
       '/summary': { get: { operationId: 'summary', summary: 'Counts, open tasks, latest changes', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Summary' } } } },
       '/inbox': {
         post: { operationId: 'addToInbox', summary: 'Drop raw material (a chat, a search, a note) to be turned into rows later', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['items'], properties: { items: { type: 'array', maxItems: 100, items: { type: 'object', required: ['kind', 'source', 'at'], properties: {
