@@ -18,6 +18,15 @@ const REQUEST_TTL = 10 * 60e3, CODE_TTL = 5 * 60e3;
 
 /** The resources a token may be minted for: the MCP endpoint, the REST API, or the hub as a whole. */
 export const resourcesOf = (cfg: Config) => [`${cfg.publicUrl}/mcp`, `${cfg.publicUrl}/v1`, cfg.publicUrl];
+/** A team space's own MCP endpoint (execution WBS 3.8): its address names the space, so every connection made with it —
+ *  typically the connector a team's Claude organisation adds once for everyone — works in that team's environment. */
+export const TEAM_MCP_PATH = /^\/mcp\/t\/(s_[A-Za-z0-9_-]{22})$/;
+export const teamOf = (cfg: Config, resource: string) => {
+  if (!resource.startsWith(cfg.publicUrl + '/')) return null;
+  const m = TEAM_MCP_PATH.exec(resource.slice(cfg.publicUrl.length));
+  return m ? m[1] : null;
+};
+export const isResource = (cfg: Config, resource: string) => resourcesOf(cfg).includes(resource) || teamOf(cfg, resource) !== null;
 
 export function serverMetadata(cfg: Config) {
   const u = cfg.publicUrl;
@@ -153,7 +162,7 @@ export function oauthRouter(deps: OAuthDeps): Router {
     if (q.code_challenge ? q.code_challenge_method !== 'S256' : !client.secret_hash) return back('invalid_request', 'PKCE with S256 is required');
     const scope = scopesOf(q.scope); if (!scope) return back('invalid_scope', 'unknown scope');
     const resource = q.resource || `${cfg.publicUrl}/mcp`;
-    if (!resourcesOf(cfg).includes(resource.replace(/\/$/, ''))) return back('invalid_target', 'unknown resource');
+    if (!isResource(cfg, resource.replace(/\/$/, ''))) return back('invalid_target', 'unknown resource');
     const pending = { id: random(24), client_id: client.client_id, client_name: client.client_name, redirect_uri: q.redirect_uri, code_challenge: q.code_challenge || '',
       scope, resource: resource.replace(/\/$/, ''), state: q.state || '', expires_at: Date.now() + REQUEST_TTL };
     await store.putRequest(pending);
@@ -171,6 +180,8 @@ export function oauthRouter(deps: OAuthDeps): Router {
     if (b.decision !== 'allow') return back({ error: 'access_denied', error_description: 'the user declined' });
     let uid: string;
     try { uid = (await deps.verifyIdToken(String(b.id_token || ''))).uid; } catch { return back({ error: 'access_denied', error_description: 'sign-in could not be verified' }); }
+    const team = teamOf(cfg, pending.resource);   // a team's own address: only its owners and members connect it
+    if (team) { const m = await store.membership(team, uid); if (!m || m.role === 'guest') return back({ error: 'access_denied', error_description: 'only owners and members of this team space can connect its address' }); }
     if (cfg.host.sessionUrl && deps.joinHost) {   // the connection also makes the person a member of the host product
       if (b.host_ok !== '1') return back({ error: 'access_denied', error_description: 'the host terms were not accepted' });
       const joined = await deps.joinHost(uid, String(b.id_token), { timezone: cleanTimezone(b.tz), locale: cleanLocale(b.lang) });
@@ -205,7 +216,7 @@ export function oauthRouter(deps: OAuthDeps): Router {
       if (rec.client_id !== b.client_id) return oauthError(res, 400, 'invalid_grant', 'client mismatch');
       const scope = b.scope ? b.scope.split(' ').filter(s => rec.scope.split(' ').includes(s)).join(' ') : rec.scope;   // may narrow, never widen
       const resource = b.resource ? b.resource.replace(/\/$/, '') : rec.resource;
-      if (!resourcesOf(cfg).includes(resource)) return oauthError(res, 400, 'invalid_target');
+      if (!isResource(cfg, resource) || teamOf(cfg, resource) !== teamOf(cfg, rec.resource)) return oauthError(res, 400, 'invalid_target');   // a grant keeps its team
       return res.set('Cache-Control', 'no-store').json(await issue(rec.uid, rec.client_id, rec.client_name, scope || rec.scope, resource, rec.family));
     }
     return oauthError(res, 400, 'unsupported_grant_type');

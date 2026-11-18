@@ -58,6 +58,7 @@ export function consentPage({ cfg, pending, nonce }: { cfg: Config; pending: Aut
 <p class="sub">이 앱이 ${esc(cfg.brand)} 계정의 다음 권한을 요청합니다.</p>
 <ul>${scopes}</ul>
 <p class="host">돌아갈 곳: ${esc(host)}</p>
+${/\/mcp\/t\/s_/.test(pending.resource) ? `<div class="join"><p><b>팀 환경 연결입니다.</b> 이 주소는 팀 공간 하나를 가리킵니다. 이 연결로 기록한 일은 내 원장에 쌓이고, 맞는 팀 계획 항목에 연결되면 팀에는 헌장의 기본 필드(제목·상태·날짜·링크)만 보입니다. 내 개인 원장의 다른 행은 이 연결에서 읽히지 않습니다. 팀의 소유자와 멤버만 연결할 수 있습니다.</p></div>` : ''}
 ${join ? `<div class="join"><p>허용하면 ${esc(hn)} 계정으로 로그인되고, 처음이면 이 단계에서 ${esc(hn)} 회원으로 가입됩니다.</p>
 <label><input type="checkbox" id="agree"> <span>${esc(hn)} ${links || '이용약관과 개인정보처리방침'}에 동의합니다.</span></label></div>` : ''}
 <form id="f" method="post" action="/oauth/approve"><input type="hidden" name="req" value="${esc(pending.id)}"><input type="hidden" name="id_token" id="tok"><input type="hidden" name="decision" id="dec" value="deny">

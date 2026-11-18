@@ -11,6 +11,7 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 | Path | For |
 | --- | --- |
 | `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, `wbs_charter`, `wbs_plan`, `wbs_shared`, `wbs_views`, `wbs_team`, and with `wbs.write` also `wbs_add`, `wbs_update`, `wbs_plan_put`, `wbs_share`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
+| `/mcp/t/<space id>` | The same MCP server as one team space's environment (team defaults, work linked to its plan, no personal reads). |
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
@@ -77,6 +78,16 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   many of the person's rows one read carried, and when (first and last time each day, how often). Only the person reads
   it (`wbs_views`, REST `GET /v1/views`); their own reads are not noted, nothing is written for someone who has left the
   space, and days expire after 180 days (Firestore TTL on `views`).
+- **Team environment by address**: each team space has its own MCP address, `/mcp/t/<space id>` (`connector_url` in
+  `wbs_spaces` and `wbs_team`). A connection made with it — typically the connector a Claude Team or Enterprise
+  organisation adds once for everyone — is that team's environment, so nobody picks personal or team per call: reading
+  tools default to the team; `wbs_add` and `wbs_update` without `space` write to the person's own ledger and link the
+  row to the team's plan (the item the agent names, else the one the hub matches with confidence — character bigrams,
+  so Korean particles do not hide a match — else a pending link with suggestions that reaches the team only once the
+  person picks the item); the personal ledger is not readable there and the personal inbox is not offered. Only the
+  team's owners and members can connect its address (checked at consent, which says what the connection does), the
+  token is bound to that address, and a team grant cannot be refreshed into a personal one. The plain `/mcp` address
+  stays personal.
 - **Team screen**: `wbs_team` (REST `GET /v1/team`) returns what a page shows when someone switches to a team space, in
   one call and within the permission table: the space and the caller's role, the charter in force and any open
   proposal, the members (owners and members only), the plan against the actual work, the intent alignment (not for guests), the caller's own shared rows and

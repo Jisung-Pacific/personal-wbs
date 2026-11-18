@@ -6,7 +6,7 @@ import type { Store } from './store/types.js';
 import type { TokenIssuer } from './auth/tokens.js';
 import type { VerifyIdToken } from './auth/identity.js';
 import type { JoinHost } from './auth/host.js';
-import { oauthRouter, resourceMetadata, serverMetadata } from './auth/oauth.js';
+import { oauthRouter, resourceMetadata, serverMetadata, teamOf } from './auth/oauth.js';
 import { Plans } from './wbs/plan.js';
 import { Views } from './wbs/views.js';
 import { buildMcp } from './mcp.js';
@@ -32,12 +32,18 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   app.get('/.well-known/oauth-protected-resource', prm(u));
   app.get('/.well-known/oauth-protected-resource/mcp', prm(`${u}/mcp`));
   app.get('/.well-known/oauth-protected-resource/v1', prm(`${u}/v1`));
+  app.get('/.well-known/oauth-protected-resource/mcp/t/:space', (req, res) => {   // a team's own MCP address (3.8)
+    const r = `${u}/mcp/t/${req.params.space}`;
+    if (!teamOf(cfg, r)) return res.status(404).json({ error: 'not_found' });
+    res.json(resourceMetadata(cfg, r));
+  });
   app.get(['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'], (_req, res) => { res.json(serverMetadata(cfg)); });
   app.get('/.well-known/jwks.json', (_req, res) => { res.set('Cache-Control', 'public, max-age=300').json(issuer.jwks()); });
   app.use('/oauth', oauthRouter({ cfg, store, issuer, verifyIdToken, joinHost }));
 
-  /** Bearer check for one resource: a valid hub token minted for it (or for the hub as a whole). */
-  const bearer = (path: 'mcp' | 'v1') => async (req: Authed, res: Response, next: NextFunction) => {
+  /** Bearer check for one resource: a valid hub token minted for it (or for the hub as a whole). `path`: mcp, v1, or a
+   *  team's own MCP address (mcp/t/<space id>). */
+  const bearer = (path: string) => async (req: Authed, res: Response, next: NextFunction) => {
     const challenge = (extra = '') => `Bearer resource_metadata="${u}/.well-known/oauth-protected-resource/${path}", scope="wbs.read wbs.write"${extra}`;
     const m = /^Bearer (.+)$/i.exec(req.get('authorization') || '');
     if (!m) return res.status(401).set('WWW-Authenticate', challenge()).json({ error: 'unauthorized' });
@@ -52,9 +58,10 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
     }
   };
 
-  // MCP over Streamable HTTP, stateless: one server and transport per request, JSON responses
-  app.post('/mcp', bearer('mcp'), express.json({ limit: '1mb' }), async (req: Authed, res) => {
-    const server = buildMcp(ledger, spaces, req.actor!, req.scopes!, VERSION, inbox, plans, views, store);
+  // MCP over Streamable HTTP, stateless: one server and transport per request, JSON responses. `env`: the team space a
+  // team's own address names (3.8) — that connection works in the team's environment; the plain address is personal.
+  const serveMcp = (env?: string) => async (req: Authed, res: Response) => {
+    const server = buildMcp(ledger, spaces, req.actor!, req.scopes!, VERSION, inbox, plans, views, store, { env, hubUrl: u });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { void transport.close(); void server.close(); });
     try {
@@ -64,8 +71,13 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
       console.error(e);
       if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
     }
-  });
+  };
+  app.post('/mcp', bearer('mcp'), express.json({ limit: '1mb' }), serveMcp());
   app.all('/mcp', bearer('mcp'), (_req, res) => { res.status(405).set('Allow', 'POST').json({ error: 'method_not_allowed' }); });
+  const teamPath = (req: Authed & { params: Record<string, string> }, res: Response, next: NextFunction) =>
+    teamOf(cfg, `${u}/mcp/t/${req.params.space}`) ? bearer(`mcp/t/${req.params.space}`)(req, res, next) : res.status(404).json({ error: 'not_found' });
+  app.post('/mcp/t/:space', teamPath as never, express.json({ limit: '1mb' }), (req: Authed & { params: Record<string, string> }, res: Response) => serveMcp(req.params.space)(req, res));
+  app.all('/mcp/t/:space', teamPath as never, (_req, res) => { res.status(405).set('Allow', 'POST').json({ error: 'method_not_allowed' }); });
 
   app.use('/v1', bearer('v1'), restRouter(ledger, spaces, inbox, plans, views, store));
   app.get('/openapi.json', (_req, res) => { res.json(openapi(cfg, VERSION)); });

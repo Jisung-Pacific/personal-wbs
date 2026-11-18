@@ -208,6 +208,30 @@ export function intentAlignment(items: PlanItem[], intents: Intent[], work: Shar
   return { intents: rows, unanchored, off_intent_work: off, off_intent_titles: few(offWork.map(w => w.fields.title)), total_work: total, ...(byPerson ? { by_person: byPerson } : {}), lines };
 }
 
+// ---------------------------------------------------------------- matching work to the plan (3.8)
+/** Character bigrams of the words of a text, lower case: robust to Korean particles and spacing ("결제를" still has 결제). */
+function grams(s: string) {
+  const g = new Set<string>();
+  for (const w of s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+    if (w.length === 1) { g.add(w); continue; }
+    for (let i = 0; i < w.length - 1; i++) g.add(w.slice(i, i + 2));
+  }
+  return g;
+}
+/** A link is made without asking only when the best item covers at least half of its own words in the work's text,
+ *  with two or more of them, and leads the runner-up clearly. */
+export const AUTO_LINK = 0.5, AUTO_MARGIN = 0.15;
+/** Plan items ranked by how much of each item's own words (scope, deliverable, done criterion) the work's text carries;
+ *  ties go to the deeper item (the more specific one). Only items still open are candidates. */
+export function matchPlan(text: string, items: PlanItem[]) {
+  const t = grams(text);
+  return items.filter(p => p.status !== '완료' && p.status !== '백로그').map(p => {
+    const own = grams(`${p.scope} ${p.deliverable} ${p.done}`);
+    let hit = 0; own.forEach(x => { if (t.has(x)) hit++; });
+    return { year: p.year, code: p.code, scope: p.scope, hits: hit, score: own.size && hit >= 2 ? Math.round(hit / own.size * 100) / 100 : 0 };
+  }).filter(c => c.score > 0).sort((a, b) => b.score - a.score || b.code.split('.').length - a.code.split('.').length || byCode(a, b));
+}
+
 // ---------------------------------------------------------------- the service
 export class Plans {
   constructor(private store: Store, private spaces: Spaces, private views?: Views) {
@@ -356,16 +380,43 @@ export class Plans {
 
   /** The caller's own links: which rows serve which team plan items, the fields shared, and the team's copy: live
    *  (follows the row), frozen (kept by the team after the person left or became a guest) or none. */
-  async mine(caller: Caller) {
+  async mine(caller: Caller, space?: string) {
     const uid = callerUid(caller);
     if (!uid) throw new LedgerError('forbidden', 'A team agent has no rows of its own');
-    const links = (await this.store.links(uid)).sort(byCode);
+    const links = (await this.store.links(uid)).filter(l => !space || l.space === space).sort(byCode);
     const copies = new Map<string, SharedWork[]>();
     for (const sp of new Set(links.map(l => l.space))) copies.set(sp, await this.store.shared(sp));
     return links.map(l => {
       const c = copies.get(l.space)?.find(w => w.id === workId(uid, l.year, l.code));
-      return { year: l.year, code: l.code, space: l.space, plan: l.plan, share: l.share, team_copy: !c ? 'none' : c.frozen ? 'frozen' : 'live' };
+      return { year: l.year, code: l.code, space: l.space, plan: l.plan, share: l.share, team_copy: !c ? 'none' : c.frozen ? 'frozen' : 'live',
+        ...(l.plan ? {} : { pending: true }) };   // recorded through the team's connection, waiting for its plan item
     });
+  }
+
+  /** The link of one of the caller's rows, if any (pending ones included). */
+  async linkOf(caller: Caller, year: string, code: string) {
+    const uid = callerUid(caller);
+    return uid ? (await this.store.links(uid)).find(l => l.year === year && l.code === code) ?? null : null;
+  }
+
+  /** Work recorded through a team's own connection (execution WBS 3.8): the row is the person's own, and it is linked to
+   *  the plan item it serves — the one the agent named, else the one the hub matches with confidence — with the
+   *  charter's default fields. Without a confident match it waits as a pending link (nothing reaches the team) and the
+   *  best candidates come back as suggestions for the person to pick. */
+  async recordFor(caller: Caller, space: string, row: { year: string; code: string; task: string; goal?: string }, plan?: string, planYear?: string) {
+    const uid = callerUid(caller);
+    if (!uid) throw new LedgerError('forbidden', 'A team agent has no rows of its own');
+    if (plan) return { space, status: 'linked' as const, ...(await this.share(caller, { year: row.year, code: row.code, space, plan, plan_year: planYear })) };
+    const all = await this.store.plan(space), year = planYear || row.year;
+    const pool = all.some(p => p.year === year) ? all.filter(p => p.year === year) : all;
+    const ranked = matchPlan(`${row.task} ${row.goal || ''}`, pool), [top, next] = ranked;
+    if (top && top.score >= AUTO_LINK && (!next || top.score - next.score >= AUTO_MARGIN)) {
+      const r = await this.share(caller, { year: row.year, code: row.code, space, plan: top.code, plan_year: top.year });
+      return { space, status: 'linked' as const, matched: { plan: top.code, plan_year: top.year, scope: top.scope, score: top.score }, ...r };
+    }
+    await this.store.putLink(uid, { year: row.year, code: row.code, space, plan: '', share: [...DEFAULT_SHARE], at: Date.now() });
+    return { space, status: 'pending' as const, suggestions: ranked.slice(0, 3).map(c => ({ plan: c.code, plan_year: c.year, scope: c.scope, score: c.score })),
+      next: 'Nothing reached the team yet. Ask the person which plan item this serves, then wbs_share with that plan.' };
   }
 
   /** The ledger's hook (service.ts): rows of a personal ledger changed; the team copies of linked ones follow while the
@@ -374,7 +425,7 @@ export class Plans {
     const links = await this.store.links(uid);
     for (const k of keys) {
       const l = links.find(x => x.year === k.year && x.code === k.code);
-      if (!l) continue;
+      if (!l || !l.plan) continue;   // a pending link has nothing at the team yet
       const [m, row] = await Promise.all([this.store.membership(l.space, uid), this.store.row(uid, k.year, k.code)]);
       if (!m || m.role === 'guest') continue;   // no longer sharing: the team's copy stays frozen (dropShared)
       if (!row) { await this.store.removeShared(l.space, workId(uid, k.year, k.code)); continue; }

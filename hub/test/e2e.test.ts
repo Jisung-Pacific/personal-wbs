@@ -56,9 +56,9 @@ async function connect(base: string, opts: { uid: string; scope?: string; resour
   assert.equal(tok.status, 200, await tok.clone().text());
   return { clientId, code, verifier: v, redirect, ...(await tok.json()) as { access_token: string; refresh_token: string; scope: string } };
 }
-async function mcp(base: string, token: string) {
+async function mcp(base: string, token: string, path = '/mcp') {
   const client = new Client({ name: 'e2e', version: '1' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${base}${path}`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
   return client;
 }
 const json = (r: unknown) => JSON.parse(((r as { content: { text: string }[] }).content[0]).text);
@@ -311,5 +311,77 @@ test('confidential client (GPT Actions style): secret instead of PKCE, wrong sec
     const t = await tok.json();
     const rows = await fetch(`${base}/v1/rows`, { headers: { authorization: `Bearer ${t.access_token}` } });
     assert.equal(rows.status, 200);
+  } finally { await close(); }
+});
+
+test('a team\'s own address: the connection is that team\'s environment — work lands in the person\'s ledger linked to the plan, the personal ledger stays out', async () => {
+  const { base, store, close } = await boot();
+  try {
+    const spaces = new Spaces(store), s = await spaces.create(person('u_j'), '연구실');
+    await spaces.setMember(person('u_j'), s.id, 'u_m', 'member');
+    await spaces.proposeCharter(person('u_j'), s.id, ['공유는 필드 단위다.']);
+    await spaces.consentCharter(person('u_m'), s.id, 1, true);
+    const team = `/mcp/t/${s.id}`, resource = `${base}${team}`;
+    // discovery names the team address as its own resource; a malformed one is not found
+    assert.equal((await (await fetch(`${base}/.well-known/oauth-protected-resource${team}`)).json()).resource, resource);
+    assert.equal((await fetch(`${base}/.well-known/oauth-protected-resource/mcp/t/nope`)).status, 404);
+    const un = await fetch(`${base}${team}`, { method: 'POST' });
+    assert.equal(un.status, 401); assert.match(un.headers.get('www-authenticate') || '', new RegExp(`oauth-protected-resource${team}`));
+    // the owner writes the plan on a personal connection, naming the space
+    const p = await mcp(base, (await connect(base, { uid: 'u_j', clientName: 'Claude' })).access_token);
+    json(await p.callTool({ name: 'wbs_plan_put', arguments: { space: s.id, items: [
+      { year: '2026', code: '1', scope: '출시 준비' }, { year: '2026', code: '1.1', scope: '결제 연동', deliverable: '정기 결제와 환불', status: '진행 중' },
+      { year: '2026', code: '1.2', scope: '가입·로그인 흐름', deliverable: '이메일·소셜 로그인, 비밀번호 재설정', status: '진행 중' }] } }));
+    const personalRow = json(await p.callTool({ name: 'wbs_add', arguments: { area: '6 개인 행정', package: '6.1 개인 일정', task: '개인 서류 정리', start: '2026-11-18', status: '완료' } }));
+    await p.close();
+    // the member connects the team's address: the consent page says so, and the token is bound to it
+    const t = await connect(base, { uid: 'u_m', clientName: 'Claude', resource });
+    const c = await mcp(base, t.access_token, team);
+    const names = (await c.listTools()).tools.map(x => x.name);
+    assert.ok(!names.includes('wbs_inbox_list') && !names.includes('wbs_inbox_add'), 'the personal inbox is not on a team connection');
+    const sps = json(await c.callTool({ name: 'wbs_spaces', arguments: {} }));
+    const me = sps.find((x: { id: string }) => x.id === s.id);
+    assert.equal(me.this_connection, true); assert.equal(me.connector_url, resource);
+    // recording without space: the member's own ledger, linked to the team plan
+    const named = json(await c.callTool({ name: 'wbs_add', arguments: { area: '4 창업·제품', package: '4.3 서비스 개발', task: '관리자 화면 초안', start: '2026-11-18', status: '진행 중', plan: '1.2' } }));
+    assert.equal(named.team.status, 'linked'); assert.equal(named.team.linked.plan, '2026:1.2');
+    const matched = json(await c.callTool({ name: 'wbs_add', arguments: { package: '4.3', task: '정기 결제 연동: 카드 등록과 자동 청구 시험 통과', start: '2026-11-18', status: '진행 중' } }));
+    assert.equal(matched.team.status, 'linked'); assert.equal(matched.team.matched.plan, '1.1', 'the hub matched the plan item');
+    const loose = json(await c.callTool({ name: 'wbs_add', arguments: { package: '4.3', task: '팀 운영 도구 비교표 작성', start: '2026-11-18', status: '진행 중' } }));
+    assert.equal(loose.team.status, 'pending'); assert.ok(Array.isArray(loose.team.suggestions));
+    const pv = json(await c.callTool({ name: 'wbs_plan', arguments: {} }));
+    assert.equal(pv.totals.shared_rows, 2, 'only linked rows reach the team; the pending one waits');
+    // the rows are the member's own, not the team's ledger
+    assert.equal(json(await c.callTool({ name: 'wbs_search', arguments: {} })).total, 0, 'reads default to the team\'s own ledger');
+    const pr = await c.callTool({ name: 'wbs_search', arguments: { space: 'personal' } });
+    assert.equal(pr.isError, true); assert.equal(json(pr).error, 'forbidden', 'the personal ledger is not readable here');
+    const mine = json(await c.callTool({ name: 'wbs_shared', arguments: {} }));
+    assert.deepEqual(mine.map((l: { code: string; pending?: boolean }) => [l.code, !!l.pending]), [[named.created.code, false], [matched.created.code, false], [loose.created.code, true]]);
+    // updates: rows linked to this team (pending included) yes, other personal rows no
+    const u = json(await c.callTool({ name: 'wbs_update', arguments: { year: '2026', code: matched.created.code, status: '완료' } }));
+    assert.equal(u.updated.status, '완료');
+    assert.equal(json(await c.callTool({ name: 'wbs_plan', arguments: {} })).items.find((i: { code: string }) => i.code === '1.1').actual.status, '완료', 'the team\'s copy followed');
+    const other = await c.callTool({ name: 'wbs_update', arguments: { year: '2026', code: personalRow.created.code, status: '진행 중' } });
+    assert.equal(other.isError, true); assert.equal(json(other).error, 'forbidden');
+    // linking the pending row once the person picks the item
+    json(await c.callTool({ name: 'wbs_share', arguments: { year: '2026', code: loose.created.code, plan: '1' } }));
+    assert.equal(json(await c.callTool({ name: 'wbs_plan', arguments: {} })).totals.shared_rows, 3);
+    const brief = json(await c.callTool({ name: 'wbs_brief', arguments: {} }));
+    assert.ok('alignment' in brief, 'the team brief by default');
+    await c.close();
+    // a personal token does not open the team address; a team grant cannot be refreshed into a personal one
+    const pt = await connect(base, { uid: 'u_m', clientName: 'Claude' });
+    assert.equal((await fetch(`${base}${team}`, { method: 'POST', headers: { authorization: `Bearer ${pt.access_token}`, 'content-type': 'application/json' }, body: '{}' })).status, 401);
+    const rf = await fetch(`${base}/oauth/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: t.clientId, resource: `${base}/mcp` }) });
+    assert.equal(rf.status, 400); assert.equal((await rf.json()).error, 'invalid_target');
+    // an outsider cannot connect the team's address
+    const reg = await (await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'Claude', redirect_uris: ['http://localhost:9999/cb'], token_endpoint_auth_method: 'none' }) })).json();
+    const { c: ch } = pkce();
+    const q = new URLSearchParams({ response_type: 'code', client_id: reg.client_id, redirect_uri: 'http://localhost:9999/cb', code_challenge: ch, code_challenge_method: 'S256', scope: 'wbs.read wbs.write', state: 'st8', resource });
+    const page = await (await fetch(`${base}/oauth/authorize?${q}`)).text();
+    assert.match(page, /팀 환경 연결입니다/);
+    const req = /name="req" value="([^"]+)"/.exec(page)![1];
+    const no = await fetch(`${base}/oauth/approve`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ req, id_token: 'dev:u_x', decision: 'allow' }) });
+    assert.equal(new URL(no.headers.get('location')!).searchParams.get('error'), 'access_denied');
   } finally { await close(); }
 });
