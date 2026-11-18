@@ -53,3 +53,23 @@ test('Firestore store: a team space keeps its ledger, key and members apart; del
   assert.equal(await store.space(s.id), null); assert.equal((await store.rows(spaceOwner(s.id))).length, 0);
   assert.deepEqual(await store.spacesOf(a), []); assert.equal((await store.rows(a)).length, 1, 'the personal ledger stays');
 });
+
+test('Firestore store: the team plan, links and shared copies are sealed, freeze on leaving and go with the space', { skip: !on }, async () => {
+  const { Spaces } = await import('../src/wbs/spaces.js'), { Plans } = await import('../src/wbs/plan.js'), { person } = await import('../src/wbs/access.js');
+  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store), plans = new Plans(store, spaces);
+  const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys)), a = 'u_a' + Date.now(), b = 'u_b' + Date.now();
+  const s = await spaces.create(person(a), '계획 시험');
+  await spaces.setMember(person(a), s.id, b, 'member');
+  await spaces.proposeCharter(person(a), s.id, ['공유는 필드 단위다.']); await spaces.consentCharter(person(b), s.id, 1, true);
+  await plans.put(person(a), s.id, { items: [{ code: '1', year: '2026', scope: '팀 계획' }, { code: '1.1', year: '2026', scope: '저장소', status: '진행 중', due: '2026-11-30' }] });
+  const r = (await ledger.add({ uid: b, clientName: 'Claude' }, { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: '저장소 구현: 비공개 상세', start: '2026-11-19', status: '진행 중' })).created;
+  await plans.share(person(b), { year: r.year, code: r.code, space: s.id, plan: '1.1' });
+  await ledger.update({ uid: b, clientName: 'Claude' }, { year: r.year, code: r.code, status: '완료' });
+  const v = await plans.actual(person(a), s.id, '2026');
+  assert.deepEqual([v.items[1].actual.rows, v.items[1].actual.status], [1, '완료']);
+  assert.equal((await store.links(b)).length, 1);
+  await spaces.removeMember(person(b), s.id, b);
+  assert.ok((await store.shared(s.id))[0].frozen, 'the copy stays with the team, frozen');
+  await spaces.remove(person(a), s.id);
+  assert.deepEqual([(await store.plan(s.id)).length, (await store.shared(s.id)).length], [0, 0]);
+});

@@ -2,7 +2,7 @@
 // ledger transaction, so two agents logging at once can never take the same code. The rules are the ledger's own:
 // one row per dated deliverable, permanent codes (max + 1 in the package or under the parent), every change logged.
 import { z } from 'zod';
-import type { LedgerEvent, Owner, Row, RowFilter, Store } from '../store/types.js';
+import { isSpaceOwner, type LedgerEvent, type Owner, type Row, type RowFilter, type Store } from '../store/types.js';
 import {
   DATE_RE, STATUSES, agentLabel, appendEvidence, codeKey, dateText, emptyRow, eventsFromCsv, eventsToCsv, fileOrderOf, mergeSource,
   overlap, rowsFromCsv, rowsToCsv, sortRows, todayKst, tokens, type FileOrder,
@@ -66,8 +66,18 @@ const viewOf = (v: View | Owner): View => typeof v === 'string' ? { owner: v } :
 const projectOf = (r: { year: string; code: string }) => `${r.year}:${r.code.split('.').slice(0, 2).join('.')}`;
 const visible = (v: View) => (r: { year: string; code: string }) => !v.projects || v.projects.includes(projectOf(r));
 
+/** Rows of a personal ledger that just changed, so whatever the person shares of them with a team follows (plan.ts). */
+export type Touched = (uid: string, keys: { year: string; code: string }[]) => Promise<void>;
+
 export class Ledger {
-  constructor(private store: Store) {}
+  constructor(private store: Store, private touched?: Touched) {}
+
+  /** After a committed write: a personal row that is linked to a team plan item updates what the team sees of it. A
+   *  failure there never undoes the ledger write; the next change or a re-link repairs it. */
+  private async follow(owner: Owner, keys: { year: string; code: string }[]) {
+    if (!this.touched || isSpaceOwner(owner) || !keys.length) return;
+    try { await this.touched(owner, keys); } catch (e) { console.error('shared work not refreshed', e); }
+  }
 
   private async rowsIn(v: View, f?: RowFilter) { return (await this.store.rows(v.owner, f)).filter(visible(v)); }
   private async eventsIn(v: View, year?: string, code?: string) { return (await this.store.events(v.owner, year, code)).filter(visible(v)); }
@@ -127,7 +137,9 @@ export class Ledger {
     const pkgCode = input.package.split(' ')[0];
     if (!/^\d+\.\d+$/.test(pkgCode)) throw new LedgerError('invalid', 'package must start with its code, e.g. "4.3 …"');
 
-    return this.store.ledgerTx(owner, async tx => {
+    const keys: { year: string; code: string }[] = [];
+    const out = await this.store.ledgerTx(owner, async tx => {
+      keys.length = 0;   // a retried transaction starts over
       const inPkg = await tx.rows({ year, packageCode: pkgCode });
       let row = emptyRow(), parent: Row | null = null;
       if (input.parent) {
@@ -172,15 +184,19 @@ export class Ledger {
           tx.event({ date: today, year, code: p.code, event: '상태', from: '완료', to: '진행 중', memo: `새 단계 ${row.code}`, source: src, estimated: 'N' });
         }
         tx.put(p);
+        keys.push({ year, code: p.code });
       }
+      keys.push({ year, code: row.code });
       return { created: brief(row) };
     });
+    await this.follow(owner, keys);
+    return out;
   }
 
   /** Status, dates, blocker, due and importance; every change lands in the history. Task text is never rewritten here. */
   async update(actor: Actor, raw: z.input<typeof UpdateInput>, owner: Owner = actor.uid) {
     const input = UpdateInput.parse(raw), src = agentLabel(actor.clientName), today = todayKst();
-    return this.store.ledgerTx(owner, async tx => {
+    const out = await this.store.ledgerTx(owner, async tx => {
       const r = await tx.get(input.year, input.code);
       if (!r) throw new LedgerError('not_found', `No row ${input.year} ${input.code}`);
       const was = { ...r }, evs: LedgerEvent[] = [];
@@ -204,6 +220,8 @@ export class Ledger {
       tx.put(r); evs.forEach(e => tx.event(e));
       return { updated: brief(r), changed: true };
     });
+    if (out.changed) await this.follow(owner, [{ year: input.year, code: input.code }]);
+    return out;
   }
 
   /** wbs.csv + events.csv. `order` picks the year order of wbs.csv rows (newest first unless the ledger is kept oldest first). */

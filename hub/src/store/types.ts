@@ -23,6 +23,28 @@ export interface CharterVersion {
   consents: Record<string, { agree: boolean; at: number }>;
 }
 
+/** One item of a team space's plan, the team plan ledger (a project WBS): a scope with its deliverable, its done
+ *  criterion, prerequisites, owners and planned dates. Codes are the plan's own (1, 1.1, 1.1.1, …) within a year and are
+ *  permanent; an item is never deleted, only parked. `log` keeps the latest changes, newest last. */
+export interface PlanItem {
+  year: string; code: string; scope: string; deliverable: string; done: string;
+  depends_on: string[]; owners: string[]; status: string; start: string; due: string;
+  updated: number; by: string; log: { at: number; by: string; via?: string; change: string }[];
+}
+/** The fields of a personal row a person may share with a team, field by field. `title` is the task text up to its
+ *  first ':' or ';' (or its first 50 characters) and `links` the http(s) links in the row (its deliverables); the rest
+ *  are the row's own columns. The team charter's default: title, status, dates and deliverable links; blocker details,
+ *  evidence and the full task text only when the person chooses. */
+export const SHARE_FIELDS = ['title', 'status', 'start', 'end', 'due', 'last_progress', 'links', 'size', 'key_result', 'blocker', 'evidence', 'task'] as const;
+export type ShareField = typeof SHARE_FIELDS[number];
+/** A personal row's reference to a team plan item, kept in the person's own space: which plan item it serves and which
+ *  of its fields the team may see. One row serves one plan item. */
+export interface PlanLink { year: string; code: string; space: string; plan: string; share: ShareField[]; at: number }
+/** What a team sees of a linked personal row: only the shared fields, under an id that does not reveal the person's own
+ *  code. `plan` is "YYYY:<plan code>". `frozen`: when the person left the space or became a guest there; the copy stays
+ *  with the team as it was (the charter: the shared copies remain with the team) and no longer follows the row. */
+export interface SharedWork { id: string; uid: string; plan: string; fields: Partial<Record<ShareField, string>>; at: number; frozen?: number }
+
 /** `projects`: for a guest, the projects (packages, as "YYYY:<code>", e.g. "2026:4.3") whose plan and work it may read. */
 export interface Membership { uid: string; role: SpaceRole; since: number; by: string; projects?: string[] }
 
@@ -136,4 +158,20 @@ export interface Store {
   charters(id: string): Promise<CharterVersion[]>;
   /** Reads the versions and writes the ones `fn` returns in `put`, atomically (one change at a time per space). */
   charterTx<T>(id: string, fn: (versions: CharterVersion[]) => Promise<{ put: CharterVersion[]; out: T }>): Promise<T>;
+  // the team plan and shared work (execution WBS 3.4)
+  /** Every plan item of a team space. */
+  plan(id: string): Promise<PlanItem[]>;
+  /** Reads the plan and writes the items `fn` returns in `put`, atomically (one change at a time per space). */
+  planTx<T>(id: string, fn: (items: PlanItem[]) => Promise<{ put: PlanItem[]; out: T }>): Promise<T>;
+  /** The links a person keeps from personal rows to team plan items (in the person's own space). */
+  links(uid: string): Promise<PlanLink[]>;
+  putLink(uid: string, l: PlanLink): Promise<void>;
+  removeLink(uid: string, year: string, code: string): Promise<void>;
+  /** The shared fields of linked personal rows, as a team space holds them. */
+  shared(id: string): Promise<SharedWork[]>;
+  putShared(id: string, w: SharedWork): Promise<void>;
+  removeShared(id: string, workId: string): Promise<void>;
+  /** Freezes everything one person shares with a space (on leaving it or becoming a guest): the copies stay and stop
+   *  following their rows. Returns how many. */
+  freezeSharedBy(id: string, uid: string, at: number): Promise<number>;
 }

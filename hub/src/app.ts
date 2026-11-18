@@ -7,6 +7,7 @@ import type { TokenIssuer } from './auth/tokens.js';
 import type { VerifyIdToken } from './auth/identity.js';
 import type { JoinHost } from './auth/host.js';
 import { oauthRouter, resourceMetadata, serverMetadata } from './auth/oauth.js';
+import { Plans } from './wbs/plan.js';
 import { buildMcp } from './mcp.js';
 import { openapi, restRouter, type Authed } from './rest.js';
 import { Ledger } from './wbs/service.js';
@@ -18,7 +19,8 @@ import { clientAddress } from './net.js';
 export const VERSION = '0.1.0';
 
 export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verifyIdToken: VerifyIdToken, joinHost?: JoinHost) {
-  const app = express(), ledger = new Ledger(store), spaces = new Spaces(store), inbox = new Inbox(store), u = cfg.publicUrl;
+  const app = express(), spaces = new Spaces(store), plans = new Plans(store, spaces), inbox = new Inbox(store), u = cfg.publicUrl;
+  const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));   // shared copies follow the rows they come from
   app.disable('x-powered-by');
   app.set('trust proxy', 1);   // Cloud Run's front end sets X-Forwarded-For; the rate limiter keys on the caller
   app.use((req, _res, next) => { (req as typeof req & { client?: string }).client = clientAddress(req, cfg.proxySecret); next(); });
@@ -51,7 +53,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
 
   // MCP over Streamable HTTP, stateless: one server and transport per request, JSON responses
   app.post('/mcp', bearer('mcp'), express.json({ limit: '1mb' }), async (req: Authed, res) => {
-    const server = buildMcp(ledger, spaces, req.actor!, req.scopes!, VERSION, inbox);
+    const server = buildMcp(ledger, spaces, req.actor!, req.scopes!, VERSION, inbox, plans);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { void transport.close(); void server.close(); });
     try {
@@ -64,7 +66,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   });
   app.all('/mcp', bearer('mcp'), (_req, res) => { res.status(405).set('Allow', 'POST').json({ error: 'method_not_allowed' }); });
 
-  app.use('/v1', bearer('v1'), restRouter(ledger, spaces, inbox));
+  app.use('/v1', bearer('v1'), restRouter(ledger, spaces, inbox, plans));
   app.get('/openapi.json', (_req, res) => { res.json(openapi(cfg, VERSION)); });
   app.get('/healthz', (_req, res) => { res.json({ ok: true, version: VERSION }); });
   // public pages: how to connect each agent, the privacy notice, and directory domain verification

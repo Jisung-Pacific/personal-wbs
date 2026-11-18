@@ -12,6 +12,9 @@
 //   spaces/{id}/keys/dek               the space's data key, wrapped like an account's; deleting it shreds the space
 //   spaces/{id}/charter/{version}      {status, by, at, activeAt?, closedAt?, consents: {uid: {agree, at}}, enc} — lines and note sealed
 //   spaces/{id}/rows|events|inbox|secrets   the team ledger, laid out and sealed exactly like a personal one
+//   spaces/{id}/plan/{year}_{code}     one item of the team plan: {year, code, enc} — scope, deliverable, owners, dates sealed
+//   spaces/{id}/shared/{workId}        the shared fields of one member's linked row: {uid, frozen?, enc} — plan code and fields sealed
+//   users/{uid}/links/{year}_{code}    a personal row's link to a team plan item: {year, code, enc} — space, plan, fields sealed
 // year and code stay readable so queries can select a year or a task, and memberships (uid, role) so access can be
 // checked; everything else is ciphertext.
 //   oauth_clients/{sha256(client_id)}  registered or metadata-document clients
@@ -21,7 +24,7 @@ import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import {
   isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
-  type OAuthClient, type RefreshRecord, type Row, type RowFilter, type SpaceRecord, type SpaceRole, type Store,
+  type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
 } from './types.js';
 import { matches } from './memory.js';
 import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from '../crypto/envelope.js';
@@ -253,6 +256,58 @@ export class FirestoreStore implements Store {
       sealed.forEach(d => t.set(this.charterCol(id).doc(String(d.version)), d));
       return out;
     });
+  }
+
+  // ---------------------------------------------------------------- the team plan, links and shared work (3.4)
+  private planCol(id: string) { return this.spaceDoc(id).collection('plan'); }
+  private sharedCol(id: string) { return this.spaceDoc(id).collection('shared'); }
+  private linksCol(uid: string) { return home(this.db, uid).collection('links'); }
+  private async openPlan(id: string, docId: string, d: Record<string, unknown>): Promise<PlanItem> {
+    const body = await this.envelope.open<Omit<PlanItem, 'year' | 'code'>>(spaceOwner(id), `plan/${docId}`, d.enc as Sealed);
+    return { year: d.year as string, code: d.code as string, ...body };
+  }
+  private async sealPlan(id: string, p: PlanItem) {
+    const { year, code, ...body } = p;
+    return { year, code, enc: await this.envelope.seal(spaceOwner(id), `plan/${year}_${code}`, body) };
+  }
+  async plan(id: string) {
+    const s = await this.planCol(id).get();
+    return Promise.all(s.docs.map(d => this.openPlan(id, d.id, d.data())));
+  }
+  async planTx<T>(id: string, fn: (items: PlanItem[]) => Promise<{ put: PlanItem[]; out: T }>): Promise<T> {
+    await this.envelope.dek(spaceOwner(id));   // KMS outside the retryable transaction; sealing inside is local
+    return this.db.runTransaction(async t => {
+      const s = await t.get(this.planCol(id));
+      const { put, out } = await fn(await Promise.all(s.docs.map(d => this.openPlan(id, d.id, d.data()))));
+      const sealed = await Promise.all(put.map(p => this.sealPlan(id, p)));
+      sealed.forEach(d => t.set(this.planCol(id).doc(`${d.year}_${d.code}`), d));
+      return out;
+    });
+  }
+  async links(uid: string) {
+    const s = await this.linksCol(uid).get();
+    return Promise.all(s.docs.map(async d => ({ year: d.get('year') as string, code: d.get('code') as string,
+      ...await this.envelope.open<Omit<PlanLink, 'year' | 'code'>>(uid, `links/${d.id}`, d.get('enc') as Sealed) })));
+  }
+  async putLink(uid: string, l: PlanLink) {
+    const { year, code, ...body } = l, docId = `${year}_${code}`;
+    await this.linksCol(uid).doc(docId).set({ year, code, enc: await this.envelope.seal(uid, `links/${docId}`, body) });
+  }
+  async removeLink(uid: string, year: string, code: string) { await this.linksCol(uid).doc(`${year}_${code}`).delete(); }
+  async shared(id: string) {
+    const s = await this.sharedCol(id).get();
+    return Promise.all(s.docs.map(async d => ({ id: d.id, uid: d.get('uid') as string, ...(d.get('frozen') ? { frozen: d.get('frozen') as number } : {}),
+      ...await this.envelope.open<Omit<SharedWork, 'id' | 'uid' | 'frozen'>>(spaceOwner(id), `shared/${d.id}`, d.get('enc') as Sealed) })));
+  }
+  async putShared(id: string, w: SharedWork) {
+    const { id: workId, uid, frozen, ...body } = w;
+    await this.sharedCol(id).doc(workId).set({ uid, ...(frozen ? { frozen } : {}), enc: await this.envelope.seal(spaceOwner(id), `shared/${workId}`, body) });
+  }
+  async removeShared(id: string, workId: string) { await this.sharedCol(id).doc(workId).delete(); }
+  async freezeSharedBy(id: string, uid: string, at: number) {
+    const s = await this.sharedCol(id).where('uid', '==', uid).get(), live = s.docs.filter(d => !d.get('frozen'));
+    const b = this.db.batch(); live.forEach(d => b.update(d.ref, { frozen: at })); await b.commit();
+    return live.length;
   }
 
   /** Shred first (the team ledger becomes unreadable at once), then drop the members' entries and the documents. */

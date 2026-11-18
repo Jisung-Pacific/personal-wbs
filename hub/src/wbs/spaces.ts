@@ -55,6 +55,19 @@ type Rel = { relation: Relation; member?: Membership };
 export class Spaces {
   constructor(private store: Store) {}
 
+  /** Called when someone stops being an owner or member of a space (removed, left, made a guest, account deleted), so
+   *  what they shared with it goes too. The plan service (plan.ts) sets it. */
+  left?: (space: string, uid: string) => Promise<void>;
+
+  /** A team-space call outside the ledger tools (the plan, shared work): the permission table and the charter gate, then
+   *  the caller's relation, a guest's projects, and whether the caller may see who is who (members.read). */
+  async enter(caller: Caller, space: string | undefined, action: Action) {
+    if (!space || space === PERSONAL) throw new LedgerError('invalid', 'This works in a team space; pass its id from wbs_spaces');
+    const r = await this.need(caller, space, action);
+    await this.gate(caller, space, r);
+    return { relation: r.relation, projects: r.relation === 'guest' ? r.member?.projects ?? [] : undefined, named: decide(caller, r.relation, 'members.read').allow };
+  }
+
   /** What a call may read or write: the caller's own ledger (no space, or "personal") or a team space, as the permission
    *  table allows. A guest reads only its projects; outsiders are told the space does not exist. */
   async view(caller: Caller, space: string | undefined, need: 'read' | 'write'): Promise<View> {
@@ -115,6 +128,7 @@ export class Spaces {
     const p = role === 'guest' ? cleanProjects(projects ?? cur?.projects) : undefined;
     if (role === 'member' && projects !== undefined) throw new LedgerError('invalid', 'Members see every project; projects are for guests');
     await this.store.putMember(id, { uid: who, role, since: cur?.since ?? Date.now(), by: callerUid(caller)!, ...(p ? { projects: p } : {}) });
+    if (role === 'guest' && cur && cur.role !== 'guest') await this.left?.(id, who);   // a guest shares nothing with the team
     await this.settle(id);   // a member who becomes a guest no longer holds up a proposal
     return { uid: who, role, ...(p ? { projects: p } : {}) };
   }
@@ -128,6 +142,7 @@ export class Spaces {
     if (!m) throw new LedgerError('not_found', 'Not in this space');
     if (m.role === 'owner') throw new LedgerError('invalid', 'The owner cannot be removed; hand the space over first');
     await this.store.removeMember(id, who);
+    await this.left?.(id, who);
     await this.settle(id);   // the last person still to answer may be the one who left
     return { removed: who };
   }
@@ -154,7 +169,10 @@ export class Spaces {
     assertUid(uid);
     const mine = await this.store.spacesOf(uid), owned = mine.filter(s => s.role === 'owner');
     for (const s of owned) if ((await this.store.members(s.id)).length > 1) throw new LedgerError('invalid', `Hand space ${s.id} to a member before deleting the account`);
-    for (const s of mine) await (s.role === 'owner' ? this.store.deleteSpace(s.id) : this.store.removeMember(s.id, uid));
+    for (const s of mine) {
+      if (s.role === 'owner') { await this.store.deleteSpace(s.id); continue; }
+      await this.store.removeMember(s.id, uid); await this.left?.(s.id, uid);
+    }
     await this.store.deleteAccount(uid);
   }
 

@@ -7,6 +7,7 @@ import { AddInput, Ledger, LedgerError, SearchInput, UpdateInput, type Actor } f
 import { InboxAddInput, InboxListInput, InboxMarkInput, type Inbox } from './wbs/inbox.js';
 import { agent } from './wbs/access.js';
 import type { Spaces } from './wbs/spaces.js';
+import { PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
 
 export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every year of their work as atomic rows (one concrete deliverable, decision or event per row, dated from its source), shared by every agent they use.
 - Before adding, search (wbs_search) for the same work; extend an existing task with a dated step (wbs_add with parent) or a status change (wbs_update) instead of a near-duplicate row.
@@ -17,6 +18,7 @@ export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every ye
 - Planning, advising or reviewing: call wbs_brief first and drill down only where it points (wbs_search, wbs_get); do not page through the ledger.
 - Record work silently in the background when the user finishes something concrete; mention it only if they ask.
 - The inbox holds raw material captured where no agent could write (chats on other AI sites, searches, notes). When asked to process it, read wbs_inbox_list, turn what is concrete work into rows with the rules above, and mark every item merged (with the codes) or skipped.
+- A team space has a plan (its project WBS): read it against the actual work with wbs_plan, write it with wbs_plan_put. Record a person's own work in their personal ledger and link it to a plan item with wbs_share; only the fields they choose reach the team.
 - Every tool works on the user's personal ledger unless you pass space: a team space id from wbs_spaces, for the team's plan and work. Write personal work to the personal ledger and team plan items to the team space. A guest sees only its assigned projects; people, not agents, manage a space's members. A team space opens to a member once they have agreed to its charter (wbs_charter); agreeing and proposing changes are for the user to do, so tell them when a proposal waits for their answer.`;
 
 const ok = (v: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(v) }] });
@@ -27,7 +29,7 @@ const fail = (e: unknown) => {
 };
 const run = async (f: () => Promise<unknown>) => { try { return ok(await f()); } catch (e) { return fail(e); } };
 
-export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox): McpServer {
+export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans): McpServer {
   const server = new McpServer({ name: 'ppwbs-hub', title: 'PP WBS Hub', version }, { instructions: INSTRUCTIONS });
   const read = scopes.includes('wbs.read'), write = scopes.includes('wbs.write');
   const ro = { readOnlyHint: true, openWorldHint: false } as const;
@@ -54,6 +56,17 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'The charter of a team space (at most 9 lines): the version in force, an open proposal with who has agreed and who still has to answer, and every version so far. A member enters the space only after agreeing to the version in force; agreeing and proposing are done by the user, not by agents.',
       inputSchema: { space: z.string().describe('A team space id from wbs_spaces') }, annotations: ro,
     }, async a => run(() => spaces.charter(caller, a.space)));
+    if (plans) server.registerTool('wbs_plan', {
+      title: 'Read a team plan against the actual work',
+      description: 'The team space\'s plan (its project WBS: scope, deliverable, done criterion, prerequisites, owners, planned dates) set against the work members linked to it from their own ledgers: per item the shared rows, how many are done, the state and dates they show, days late against the due date, and flags (late, in progress with no work, plan done with work open, work done with the plan open, work started on a parked item, waiting). view "items" gives the plan items with their change log instead. Members see who did the work; guests see their projects only.',
+      inputSchema: { space: z.string().describe('A team space id from wbs_spaces'), view: z.enum(['actual', 'items']).optional().describe('actual (default): plan vs actual; items: the plan items'), year: z.string().regex(/^\d{4}$/).optional() },
+      annotations: ro,
+    }, async a => run(() => a.view === 'items' ? plans.list(caller, a.space, a.year) : plans.actual(caller, a.space, a.year)));
+    if (plans) server.registerTool('wbs_shared', {
+      title: 'List what you share with teams',
+      description: 'Your rows that are linked to team plan items: which plan item each serves, which fields the team sees, and whether the team still receives them.',
+      inputSchema: {}, annotations: ro,
+    }, async () => run(() => plans.mine(caller)));
 
     server.registerTool('wbs_get', {
       title: 'Open one ledger row',
@@ -105,6 +118,18 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'Change status, end date, due date, importance or blocker of an existing row. The change and its memo go into the history; the task text is never rewritten (record a new result as a step with wbs_add).',
       inputSchema: { ...UpdateInput.shape, ...space }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ space: s, ...a }) => run(async () => ledger.update(actor, a, (await at(s, 'write')).owner)));
+    if (plans) server.registerTool('wbs_plan_put', {
+      title: 'Write a team plan',
+      description: 'Add items to a team space\'s plan or change them (owners and members). Codes are the plan\'s own (1, 1.1, 1.1.1) and permanent; a child needs its parent; give only the fields that change; park an item with status 백로그 instead of deleting it. Up to 200 items per call, applied in code order.',
+      inputSchema: { space: z.string().describe('A team space id from wbs_spaces'), items: z.array(PlanItemInput).min(1).max(200), memo: z.string().max(300).optional() },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ space: s, ...a }) => run(() => plans.put(caller, s, a)));
+    if (plans) server.registerTool('wbs_share', {
+      title: 'Share a row of yours with a team plan',
+      description: 'Link one row of the user\'s own ledger to a team plan item and choose which of its fields the team sees (status always; default status, start, end, last_progress; add task only when the user wants the text shared). The team\'s copy follows the row from then on. stop: true withdraws it. Work is recorded in the personal ledger first (wbs_add), then shared.',
+      inputSchema: { ...ShareInput.partial({ space: true, plan: true }).shape, stop: z.boolean().optional().describe('Withdraw the row from the team') },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ stop, ...a }) => run(() => stop ? plans.unshare(caller, a) : plans.share(caller, a as never)));
 
     if (inbox) {
       server.registerTool('wbs_inbox_add', {

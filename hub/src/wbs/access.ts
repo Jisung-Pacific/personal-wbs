@@ -20,7 +20,8 @@ export type Relation = 'owner' | 'member' | 'guest' | 'delegate' | 'none';
 
 export type Action =
   | 'space.see' | 'plan.read' | 'plan.write' | 'members.read' | 'members.manage' | 'billing.manage'
-  | 'charter.read' | 'charter.propose' | 'charter.consent' | 'cards.read' | 'space.transfer' | 'space.delete' | 'space.leave';
+  | 'charter.read' | 'charter.propose' | 'charter.consent' | 'cards.read' | 'space.transfer' | 'space.delete' | 'space.leave'
+  | 'work.share';
 
 /** Per action: the relations that grant it, and the scope an agent acting for a person needs (null: people only). */
 export const TABLE: Readonly<Record<Action, { by: readonly Relation[]; agent: 'wbs.read' | 'wbs.write' | null }>> = {
@@ -37,6 +38,7 @@ export const TABLE: Readonly<Record<Action, { by: readonly Relation[]; agent: 'w
   'space.transfer':  { by: ['owner'], agent: null },
   'space.delete':    { by: ['owner'], agent: null },
   'space.leave':     { by: ['member', 'guest'], agent: null },   // the owner hands the space over first
+  'work.share':      { by: ['owner', 'member'], agent: 'wbs.write' },   // link one's own rows to the team plan, field by field
 };
 
 export interface Decision { allow: boolean; code?: 'not_found' | 'forbidden'; why: string }

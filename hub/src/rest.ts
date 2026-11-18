@@ -6,6 +6,7 @@ import { Ledger, LedgerError, type Actor } from './wbs/service.js';
 import type { Inbox } from './wbs/inbox.js';
 import { agent } from './wbs/access.js';
 import type { Spaces } from './wbs/spaces.js';
+import type { Plans } from './wbs/plan.js';
 import type { Config } from './config.js';
 
 export type Authed = Request & { actor?: Actor; scopes?: string[] };
@@ -20,7 +21,7 @@ function send(res: Response, f: () => Promise<unknown>) {
 const need = (scope: string) => (req: Authed, res: Response, next: () => void) =>
   req.scopes?.includes(scope) ? next() : res.status(403).set('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${scope}"`).json({ error: 'insufficient_scope', scope });
 
-export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox): Router {
+export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?: Plans): Router {
   const r = Router(); r.use(express.json({ limit: '256kb' }));
   const list = (v: unknown) => typeof v === 'string' && v ? v.split(',') : undefined;
   // the token's agent acts for its person; `?space=<id>` picks a team space (the permission table decides), default personal
@@ -41,6 +42,15 @@ export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox): Router
   r.post('/inbox', need('wbs.write'), (req: Authed, res) => send(res, () => inbox.add(req.actor!.uid, req.body)));
   r.get('/inbox', need('wbs.read'), (req: Authed, res) => send(res, () => inbox.list(req.actor!.uid, { status: req.query.status || undefined, limit: req.query.limit ? Number(req.query.limit) : undefined })));
   r.post('/inbox/mark', need('wbs.write'), (req: Authed, res) => send(res, () => inbox.mark(req.actor!.uid, req.body)));
+  if (plans) {   // the team plan against the actual work, and sharing one's own rows with it (execution WBS 3.4)
+    const who = (req: Authed) => agent(req.actor!.uid, req.actor!.clientName, req.scopes || []);
+    const sp = (req: Authed) => String(req.query.space || ''), yr = (req: Authed) => typeof req.query.year === 'string' ? req.query.year : undefined;
+    r.get('/plan', need('wbs.read'), (req: Authed, res) => send(res, () => req.query.view === 'items' ? plans.list(who(req), sp(req), yr(req)) : plans.actual(who(req), sp(req), yr(req))));
+    r.post('/plan', need('wbs.write'), (req: Authed, res) => send(res, () => plans.put(who(req), sp(req), req.body)));
+    r.get('/share', need('wbs.read'), (req: Authed, res) => send(res, () => plans.mine(who(req))));
+    r.post('/share', need('wbs.write'), (req: Authed, res) => send(res, () => plans.share(who(req), req.body)));
+    r.delete('/share/:year/:code', need('wbs.write'), (req: Authed, res) => send(res, () => plans.unshare(who(req), { year: String(req.params.year), code: String(req.params.code) })));
+  }
   return r;
 }
 
@@ -72,6 +82,22 @@ export function openapi(cfg: Config, version: string) {
       },
       '/packages/{year}': { get: { operationId: 'listPackages', summary: 'Packages of a year and the next free codes', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }, space], responses: { 200: { description: 'Packages' } } } },
       '/charter': { get: { operationId: 'getCharter', summary: 'A team space\'s charter: the version in force, an open proposal and who has answered, every version so far', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }], responses: { 200: { description: 'Charter' } } } },
+      '/plan': {
+        get: { operationId: 'planVsActual', summary: 'A team plan against the work members linked to it (view=items: the plan items with their change log)', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' },
+          { name: 'view', in: 'query', required: false, schema: { type: 'string', enum: ['actual', 'items'] } }, { name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Plan vs actual' } } },
+        post: { operationId: 'putPlan', summary: 'Add or change team plan items (owners and members; permanent codes, parents first, only given fields change)', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['items'], properties: { memo: { type: 'string' }, items: { type: 'array', maxItems: 200, items: { type: 'object', required: ['code'], properties: {
+            code: { type: 'string' }, year: { type: 'string' }, scope: { type: 'string' }, deliverable: { type: 'string' }, done: { type: 'string' },
+            depends_on: { type: 'array', items: { type: 'string' } }, owners: { type: 'array', items: { type: 'string' } },
+            status: { type: 'string', enum: ['완료', '진행 중', '대기·심사', '백로그'] }, start: { type: 'string' }, due: { type: 'string' } } } } } } } } }, responses: { 200: { description: 'Created and changed codes' } } },
+      },
+      '/share': {
+        get: { operationId: 'listShared', summary: 'Your rows linked to team plan items, the fields each shares, and whether the team still receives them', responses: { 200: { description: 'Links' } } },
+        post: { operationId: 'shareRow', summary: 'Link a row of your own ledger to a team plan item and choose the fields the team sees (status always)', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['year', 'code', 'space', 'plan'], properties: {
+          year: { type: 'string' }, code: { type: 'string' }, space: { type: 'string' }, plan: { type: 'string' }, plan_year: { type: 'string' },
+          share: { type: 'array', items: { type: 'string', enum: ['status', 'start', 'end', 'last_progress', 'due', 'size', 'blocker', 'task', 'key_result'] } } } } } } }, responses: { 200: { description: 'What the team now sees' } } },
+      },
+      '/share/{year}/{code}': { delete: { operationId: 'unshareRow', summary: 'Withdraw a row of yours from the team plan it serves', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }, { name: 'code', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Unlinked' } } } },
       '/spaces': { get: { operationId: 'listSpaces', summary: 'The personal space and the team spaces the user belongs to, with the user\'s role; pass a team id as `space` to other calls', responses: { 200: { description: 'Spaces' } } } },
       '/brief': { get: { operationId: 'brief', summary: 'Compact picture for planning and advice: status, flow, focus, open and due work, waiting items, work style, signals', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Brief' } } } },
       '/summary': { get: { operationId: 'summary', summary: 'Counts, open tasks, latest changes', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Summary' } } } },

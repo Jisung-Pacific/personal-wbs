@@ -2,7 +2,7 @@
 // per-user transactions (a promise chain per uid serialises them, as Firestore's transactions would).
 import {
   spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
-  type RefreshRecord, type Row, type RowFilter, type SpaceRecord, type Store,
+  type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store,
 } from './types.js';
 
 const key = (year: string, code: string) => `${year}|${code}`;
@@ -95,9 +95,9 @@ export class MemoryStore implements Store {
     this.dropOwner(uid);
     for (const [h, r] of this.refresh) if (r.uid === uid) this.refresh.delete(h);
   }
-  /** Everything kept under one ledger owner: its rows and history, inbox and secrets. */
+  /** Everything kept under one ledger owner: its rows and history, inbox, secrets and (for an account) its plan links. */
   private dropOwner(owner: string) {
-    this.ledgers.delete(owner); this.boxes.delete(owner);
+    this.ledgers.delete(owner); this.boxes.delete(owner); this.linkOf.delete(owner);
     for (const k of [...this.secrets.keys()]) if (k.startsWith(owner + '|')) this.secrets.delete(k);
   }
 
@@ -127,7 +127,43 @@ export class MemoryStore implements Store {
     if (prev && prev.uid !== uid) prev.role = 'member';
     next.role = 'owner'; s.owner = uid;
   }
-  async deleteSpace(id: string) { this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.dropOwner(spaceOwner(id)); }
+  async deleteSpace(id: string) {
+    this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.dropOwner(spaceOwner(id));
+  }
+
+  // the team plan, people's links to it and the shared fields a space holds
+  private planOf = new Map<string, Map<string, PlanItem>>();
+  private linkOf = new Map<string, Map<string, PlanLink>>();
+  private sharedOf = new Map<string, Map<string, SharedWork>>();
+  async plan(id: string) { return [...(this.planOf.get(id)?.values() ?? [])].map(p => structuredClone(p)); }
+  async planTx<T>(id: string, fn: (items: PlanItem[]) => Promise<{ put: PlanItem[]; out: T }>): Promise<T> {
+    const lock = 'plan|' + id, prev = this.locks.get(lock) || Promise.resolve();
+    const run = prev.then(async () => {
+      const { put, out } = await fn(await this.plan(id));
+      let m = this.planOf.get(id); if (!m) { m = new Map(); this.planOf.set(id, m); }
+      for (const p of put) m.set(key(p.year, p.code), structuredClone(p));   // writes land only after fn succeeds
+      return out;
+    });
+    this.locks.set(lock, run.catch(() => undefined));
+    return run;
+  }
+  async links(uid: string) { return [...(this.linkOf.get(uid)?.values() ?? [])].map(l => structuredClone(l)); }
+  async putLink(uid: string, l: PlanLink) {
+    let m = this.linkOf.get(uid); if (!m) { m = new Map(); this.linkOf.set(uid, m); }
+    m.set(key(l.year, l.code), structuredClone(l));
+  }
+  async removeLink(uid: string, year: string, code: string) { this.linkOf.get(uid)?.delete(key(year, code)); }
+  async shared(id: string) { return [...(this.sharedOf.get(id)?.values() ?? [])].map(w => structuredClone(w)); }
+  async putShared(id: string, w: SharedWork) {
+    let m = this.sharedOf.get(id); if (!m) { m = new Map(); this.sharedOf.set(id, m); }
+    m.set(w.id, structuredClone(w));
+  }
+  async removeShared(id: string, workId: string) { this.sharedOf.get(id)?.delete(workId); }
+  async freezeSharedBy(id: string, uid: string, at: number) {
+    let n = 0;
+    for (const w of this.sharedOf.get(id)?.values() ?? []) if (w.uid === uid && !w.frozen) { w.frozen = at; n++; }
+    return n;
+  }
 
   private charterOf = new Map<string, Map<number, CharterVersion>>();
   async charters(id: string) { return [...(this.charterOf.get(id)?.values() ?? [])].sort((a, b) => a.version - b.version).map(c => structuredClone(c)); }
