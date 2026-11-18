@@ -7,8 +7,10 @@ import { AddInput, Ledger, LedgerError, SearchInput, UpdateInput, type Actor } f
 import { InboxAddInput, InboxListInput, InboxMarkInput, type Inbox } from './wbs/inbox.js';
 import { agent } from './wbs/access.js';
 import type { Spaces } from './wbs/spaces.js';
+import type { Store } from './store/types.js';
 import { PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
 import { ViewsInput, type Views } from './wbs/views.js';
+import { teamOverview } from './wbs/team.js';
 
 export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every year of their work as atomic rows (one concrete deliverable, decision or event per row, dated from its source), shared by every agent they use.
 - Before adding, search (wbs_search) for the same work; extend an existing task with a dated step (wbs_add with parent) or a status change (wbs_update) instead of a near-duplicate row.
@@ -30,7 +32,7 @@ const fail = (e: unknown) => {
 };
 const run = async (f: () => Promise<unknown>) => { try { return ok(await f()); } catch (e) { return fail(e); } };
 
-export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans, views?: Views): McpServer {
+export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans, views?: Views, ledgerStore?: Store): McpServer {
   const server = new McpServer({ name: 'ppwbs-hub', title: 'PP WBS Hub', version }, { instructions: INSTRUCTIONS });
   const read = scopes.includes('wbs.read'), write = scopes.includes('wbs.write');
   const ro = { readOnlyHint: true, openWorldHint: false } as const;
@@ -68,6 +70,11 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'Your rows that are linked to team plan items: which plan item each serves, which fields the team sees, and whether the team still receives them.',
       inputSchema: {}, annotations: ro,
     }, async () => run(() => plans.mine(caller)));
+    if (plans && ledgerStore) server.registerTool('wbs_team', {
+      title: 'Open a team space',
+      description: 'Everything a team screen shows, in one call: the space and the user\'s role, the charter in force and any open proposal, the members (owners and members only), the plan against the actual work (as wbs_plan), the user\'s own rows shared there, and who read them in the last 30 days. Use it when the user switches to a team or asks how the team is doing.',
+      inputSchema: { space: z.string().describe('A team space id from wbs_spaces') }, annotations: ro,
+    }, async a => run(() => teamOverview(ledgerStore!, spaces, plans, views, caller, a.space)));
     if (views) server.registerTool('wbs_views', {
       title: 'See who viewed your shared rows',
       description: 'Who read team content carrying the user\'s shared rows: which person (and through which agent) or the team\'s agent, in which team space, how many of the user\'s rows, and when (first and last time each day, how often). Only the user sees this; their own reads are not listed. Days are kept 180 days.',

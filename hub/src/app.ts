@@ -54,7 +54,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
 
   // MCP over Streamable HTTP, stateless: one server and transport per request, JSON responses
   app.post('/mcp', bearer('mcp'), express.json({ limit: '1mb' }), async (req: Authed, res) => {
-    const server = buildMcp(ledger, spaces, req.actor!, req.scopes!, VERSION, inbox, plans, views);
+    const server = buildMcp(ledger, spaces, req.actor!, req.scopes!, VERSION, inbox, plans, views, store);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { void transport.close(); void server.close(); });
     try {
@@ -67,7 +67,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   });
   app.all('/mcp', bearer('mcp'), (_req, res) => { res.status(405).set('Allow', 'POST').json({ error: 'method_not_allowed' }); });
 
-  app.use('/v1', bearer('v1'), restRouter(ledger, spaces, inbox, plans, views));
+  app.use('/v1', bearer('v1'), restRouter(ledger, spaces, inbox, plans, views, store));
   app.get('/openapi.json', (_req, res) => { res.json(openapi(cfg, VERSION)); });
   app.get('/healthz', (_req, res) => { res.json({ ok: true, version: VERSION }); });
   // public pages: how to connect each agent, the privacy notice, and directory domain verification

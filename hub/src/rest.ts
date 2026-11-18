@@ -8,6 +8,8 @@ import { agent } from './wbs/access.js';
 import type { Spaces } from './wbs/spaces.js';
 import type { Plans } from './wbs/plan.js';
 import type { Views } from './wbs/views.js';
+import type { Store } from './store/types.js';
+import { teamOverview } from './wbs/team.js';
 import type { Config } from './config.js';
 
 export type Authed = Request & { actor?: Actor; scopes?: string[] };
@@ -22,7 +24,7 @@ function send(res: Response, f: () => Promise<unknown>) {
 const need = (scope: string) => (req: Authed, res: Response, next: () => void) =>
   req.scopes?.includes(scope) ? next() : res.status(403).set('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${scope}"`).json({ error: 'insufficient_scope', scope });
 
-export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?: Plans, views?: Views): Router {
+export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?: Plans, views?: Views, store?: Store): Router {
   const r = Router(); r.use(express.json({ limit: '256kb' }));
   const list = (v: unknown) => typeof v === 'string' && v ? v.split(',') : undefined;
   // the token's agent acts for its person; `?space=<id>` picks a team space (the permission table decides), default personal
@@ -49,6 +51,7 @@ export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?:
     r.get('/plan', need('wbs.read'), (req: Authed, res) => send(res, () => req.query.view === 'items' ? plans.list(who(req), sp(req), yr(req)) : plans.actual(who(req), sp(req), yr(req))));
     r.post('/plan', need('wbs.write'), (req: Authed, res) => send(res, () => plans.put(who(req), sp(req), req.body)));
     r.get('/share', need('wbs.read'), (req: Authed, res) => send(res, () => plans.mine(who(req))));
+    if (store) r.get('/team', need('wbs.read'), (req: Authed, res) => send(res, () => teamOverview(store, spaces, plans, views, who(req), sp(req))));
     r.post('/share', need('wbs.write'), (req: Authed, res) => send(res, () => plans.share(who(req), req.body)));
     r.delete('/share/:year/:code', need('wbs.write'), (req: Authed, res) => send(res, () => plans.unshare(who(req), { year: String(req.params.year), code: String(req.params.code) })));
   }
@@ -100,6 +103,8 @@ export function openapi(cfg: Config, version: string) {
           year: { type: 'string' }, code: { type: 'string' }, space: { type: 'string' }, plan: { type: 'string' }, plan_year: { type: 'string' },
           share: { type: 'array', items: { type: 'string', enum: ['status', 'start', 'end', 'last_progress', 'due', 'size', 'blocker', 'task', 'key_result'] } } } } } } }, responses: { 200: { description: 'What the team now sees' } } },
       },
+      '/team': { get: { operationId: 'openTeam', summary: 'A team screen in one call: the space and your role, the charter, members (owners and members), plan vs actual, your shared rows and who read them',
+        parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }], responses: { 200: { description: 'Team overview' } } } },
       '/views': { get: { operationId: 'listViews', summary: 'Who viewed your shared rows: person or agent, team space, how many rows, when and how often (yours only; kept 180 days)',
         parameters: [{ name: 'days', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 180 } }, { name: 'space', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'View log' } } } },
       '/share/{year}/{code}': { delete: { operationId: 'unshareRow', summary: 'Withdraw a row of yours from the team plan it serves', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }, { name: 'code', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Unlinked' } } } },

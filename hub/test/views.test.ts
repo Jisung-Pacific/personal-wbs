@@ -76,3 +76,19 @@ test('a person who left gets no new entries; the log keeps 180 days and filters 
   assert.equal((await views.mine(B, { days: 60, space: 's_other_space_id_000000' })).log.length, 0);
   await assert.rejects(views.mine(B, { days: 181 }), 'at most 180 days are kept');
 });
+
+test('the team screen in one call: role, charter, members, plan vs actual, my shared rows and who read them', async () => {
+  const { teamOverview } = await import('../src/wbs/team.js');
+  const { plans, views, spaces, store, id } = await team();
+  await plans.actual(A, id);   // A reads: B's log gets an entry
+  const b = await teamOverview(store, spaces, plans, views, B, id);
+  assert.deepEqual([b.space.name, b.space.role, b.charter!.in_force, b.charter!.proposal], ['시범 팀', 'member', 1, null]);
+  assert.deepEqual(b.members!.map(m => `${m.uid}:${m.role}`), ['u_a:owner', 'u_b:member', 'u_g:guest']);
+  assert.equal(b.plan.items.length, 2); assert.equal(b.my_shared.length, 2);
+  assert.equal(b.my_views!.lines.length, 1); assert.match(b.my_views!.lines[0], /u_a\(소유자\)/);
+  await spaces.proposeCharter(A, id, ['열람은 본인에게 보인다.', '떠날 때는 나눈다.']);
+  assert.deepEqual((await teamOverview(store, spaces, plans, views, B, id)).charter!.proposal, { version: 2, needs_my_answer: true });
+  const g = await teamOverview(store, spaces, plans, views, G, id);
+  assert.deepEqual([g.charter, g.members, g.space.projects, g.plan.items.map(i => i.code)], [null, null, [`${Y}:1.1`], ['1.1']], 'a guest: its project, no charter or members');
+  assert.equal(await outcome(teamOverview(store, spaces, plans, views, person('u_x'), id)), 'not_found');
+});
