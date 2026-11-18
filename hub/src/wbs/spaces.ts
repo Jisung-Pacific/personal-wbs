@@ -1,21 +1,23 @@
-// Spaces: whose ledger a call works on. Every account has its personal space (the account itself, nothing to create);
-// a team space is made by one account, its owner, who adds members (equal, read and write) and guests (read only).
-// A small AI-native team is the target: usually 2–5 people, at most 10 per space. A team space's ledger lives under
-// spaces/<id> with its own data key, so its rows, history and name are sealed apart from every member's personal ledger,
-// and deleting the space shreds that key. Personal ledgers are untouched by anything here.
+// Spaces: whose ledger a call works on, and who may do what there. Every account has its personal space (the account
+// itself, nothing to create); a team space is made by one person, its owner, who adds members (equal, read and write)
+// and guests (read only, and only the projects they are assigned). A small AI-native team is the target: usually 2–5
+// people, at most 10 per space. A team space's ledger lives under spaces/<id> with its own data key, so its rows, history
+// and name are sealed apart from every member's personal ledger, and deleting the space shreds that key.
 //
-// Checks here are the membership baseline (who belongs, and whether a guest is writing). Finer permissions — fields a
-// member may share, the agents acting for a member, viewing records — build on these records (execution WBS 3.2).
+// Every decision goes through the permission table (access.ts): the stored membership is the relation tuple, the table
+// says what it grants, and agents act within the person's relation and scopes but never govern a space.
 import { randomBytes } from 'node:crypto';
-import { spaceOwner, type Membership, type Owner, type Store } from '../store/types.js';
-import { LedgerError } from './service.js';
+import { spaceOwner, type Membership, type Store } from '../store/types.js';
+import { LedgerError, type View } from './service.js';
+import { callerUid, decide, type Action, type Caller, type Relation } from './access.js';
 
 export const PERSONAL = 'personal';
 export const MAX_PEOPLE = 10;
 const SPACE_ID = /^s_[A-Za-z0-9_-]{22}$/;
+const PROJECT = /^\d{4}:\d+\.\d+$/;   // a package of one year, e.g. "2026:4.3"
 
 /** An account id as the hub receives it from sign-in; "/" would let it pass for a ledger path, so it is refused. */
-export function assertUid(uid: string): string {
+export function assertUid(uid: unknown): string {
   if (typeof uid !== 'string' || !uid || uid.includes('/') || uid.length > 128) throw new LedgerError('invalid', 'Invalid account id');
   return uid;
 }
@@ -24,68 +26,93 @@ function cleanName(name: unknown): string {
   if (!n || n.length > 80) throw new LedgerError('invalid', 'A space name is 1–80 characters');
   return n;
 }
+function cleanProjects(p: unknown): string[] {
+  if (p === undefined) return [];
+  if (!Array.isArray(p) || p.length > 50 || !p.every(x => typeof x === 'string' && PROJECT.test(x))) {
+    throw new LedgerError('invalid', 'projects are packages as "YYYY:<code>", e.g. "2026:4.3" (at most 50)');
+  }
+  return [...new Set(p as string[])].sort();
+}
+
+type Rel = { relation: Relation; member?: Membership };
 
 export class Spaces {
   constructor(private store: Store) {}
 
-  /** The ledger a call works on. No space (or "personal") is the caller's own ledger. A team space needs membership, and
-   *  writing needs more than a guest's role. A space the caller does not belong to answers not_found, never forbidden,
-   *  so its existence is not disclosed. */
-  async ledgerFor(uid: string, space: string | undefined, need: 'read' | 'write'): Promise<Owner> {
-    assertUid(uid);
-    if (!space || space === PERSONAL) return uid;
-    const m = await this.member(uid, space);
-    if (need === 'write' && m.role === 'guest') throw new LedgerError('forbidden', 'A guest can read this space but not write to it');
-    return spaceOwner(space);
+  /** What a call may read or write: the caller's own ledger (no space, or "personal") or a team space, as the permission
+   *  table allows. A guest reads only its projects; outsiders are told the space does not exist. */
+  async view(caller: Caller, space: string | undefined, need: 'read' | 'write'): Promise<View> {
+    const action: Action = need === 'write' ? 'plan.write' : 'plan.read';
+    if (!space || space === PERSONAL) {
+      const uid = callerUid(caller);
+      if (uid === null) throw new LedgerError('not_found', 'A team agent has no personal space');
+      this.check(caller, 'owner', action);
+      return { owner: assertUid(uid) };
+    }
+    const r = await this.need(caller, space, action);
+    return r.relation === 'guest' ? { owner: spaceOwner(space), projects: r.member?.projects ?? [] } : { owner: spaceOwner(space) };
   }
 
-  async create(uid: string, name: string) {
-    assertUid(uid);
-    const s = { id: 's_' + randomBytes(16).toString('base64url'), name: cleanName(name), owner: uid, created: Date.now() };
+  /** A person makes a team space and owns it. Agents do not create spaces. */
+  async create(caller: Caller, name: string) {
+    if (caller.kind !== 'person') throw new LedgerError('forbidden', 'Creating a team space is for people, not agents');
+    const s = { id: 's_' + randomBytes(16).toString('base64url'), name: cleanName(name), owner: assertUid(caller.uid), created: Date.now() };
     await this.store.createSpace(s);
     return { id: s.id, name: s.name, role: 'owner' as const };
   }
 
-  /** The personal space first, then each team space with its name and the caller's role. */
-  async list(uid: string) {
-    assertUid(uid);
-    const teams = await Promise.all((await this.store.spacesOf(uid)).map(async m => {
-      const s = await this.store.space(m.id);
-      return s ? { id: s.id, kind: 'team' as const, name: s.name, role: m.role } : null;
+  /** The switcher's list: the personal space first, then each team space with the caller's role (a guest also sees its
+   *  projects). A team agent sees only the space that delegated it. */
+  async list(caller: Caller) {
+    if (caller.kind === 'team_agent') {
+      const s = await this.store.space(caller.space);
+      return s ? [{ id: s.id, kind: 'team' as const, name: s.name, role: 'delegate' as const }] : [];
+    }
+    this.check(caller, 'owner', 'space.see');
+    const teams = await Promise.all((await this.store.spacesOf(assertUid(caller.uid))).map(async m => {
+      const [s, me] = await Promise.all([this.store.space(m.id), this.store.membership(m.id, caller.uid)]);
+      if (!s || !me) return null;
+      return { id: s.id, kind: 'team' as const, name: s.name, role: me.role, ...(me.role === 'guest' ? { projects: me.projects ?? [] } : {}) };
     }));
     return [{ id: PERSONAL, kind: 'personal' as const, name: '', role: 'owner' as const }, ...teams.filter(t => t !== null)];
   }
 
-  /** Everyone in the space, owner first; any member or guest may see who is in it. */
-  async members(uid: string, id: string) {
-    await this.member(uid, id);
+  /** Everyone in the space, owner first (owner and members may see this; guests see only their projects' work). */
+  async members(caller: Caller, id: string) {
+    await this.need(caller, id, 'members.read');
     const order = { owner: 0, member: 1, guest: 2 } as const;
     return (await this.store.members(id)).sort((a, b) => order[a.role] - order[b.role] || a.since - b.since);
   }
 
-  /** The owner adds a member or a guest, or changes one's role. Becoming owner is a transfer, never a role change. */
-  async setMember(uid: string, id: string, who: string, role: 'member' | 'guest') {
-    await this.owner(uid, id); assertUid(who);
+  /** The owner adds a member or a guest, changes a role, or sets a guest's projects. Becoming owner is a transfer. */
+  async setMember(caller: Caller, id: string, who: string, role: 'member' | 'guest', projects?: string[]) {
+    await this.need(caller, id, 'members.manage');
+    assertUid(who);
     if (role !== 'member' && role !== 'guest') throw new LedgerError('invalid', 'role is member or guest');
-    if (who === uid) throw new LedgerError('invalid', 'The owner\'s role changes only by a transfer');
     const all = await this.store.members(id), cur = all.find(m => m.uid === who);
+    if (cur?.role === 'owner') throw new LedgerError('invalid', 'The owner\'s role changes only by a hand-over');
     if (!cur && all.length >= MAX_PEOPLE) throw new LedgerError('invalid', `A team space holds at most ${MAX_PEOPLE} people`);
-    await this.store.putMember(id, { uid: who, role, since: cur?.since ?? Date.now(), by: uid });
-    return { uid: who, role };
+    const p = role === 'guest' ? cleanProjects(projects ?? cur?.projects) : undefined;
+    if (role === 'member' && projects !== undefined) throw new LedgerError('invalid', 'Members see every project; projects are for guests');
+    await this.store.putMember(id, { uid: who, role, since: cur?.since ?? Date.now(), by: callerUid(caller)!, ...(p ? { projects: p } : {}) });
+    return { uid: who, role, ...(p ? { projects: p } : {}) };
   }
 
   /** The owner removes someone, or a member or guest leaves. The owner leaves only after handing the space over. */
-  async removeMember(uid: string, id: string, who: string) {
-    const me = who === uid ? await this.member(uid, id) : await this.owner(uid, id);
-    if (me.role === 'owner' && who === uid) throw new LedgerError('invalid', 'Hand the space to a member before leaving it');
-    if (!(await this.store.membership(id, assertUid(who)))) throw new LedgerError('not_found', 'Not in this space');
+  async removeMember(caller: Caller, id: string, who: string) {
+    const self = callerUid(caller) === who, r = await this.relation(caller, id);
+    if (self && r.relation === 'owner' && caller.kind === 'person') throw new LedgerError('invalid', 'Hand the space to a member before leaving it');
+    this.check(caller, r.relation, self ? 'space.leave' : 'members.manage');
+    const m = await this.store.membership(id, assertUid(who));
+    if (!m) throw new LedgerError('not_found', 'Not in this space');
+    if (m.role === 'owner') throw new LedgerError('invalid', 'The owner cannot be removed; hand the space over first');
     await this.store.removeMember(id, who);
     return { removed: who };
   }
 
   /** The owner hands the space to a member (not a guest); the old owner stays on as a member. */
-  async transfer(uid: string, id: string, to: string) {
-    await this.owner(uid, id);
+  async transfer(caller: Caller, id: string, to: string) {
+    await this.need(caller, id, 'space.transfer');
     const m = await this.store.membership(id, assertUid(to));
     if (!m || m.role !== 'member') throw new LedgerError('invalid', 'Hand the space to one of its members');
     await this.store.setOwner(id, to);
@@ -93,14 +120,14 @@ export class Spaces {
   }
 
   /** The owner deletes the space: its key is shredded, then its ledger and memberships are removed. */
-  async remove(uid: string, id: string) {
-    await this.owner(uid, id);
+  async remove(caller: Caller, id: string) {
+    await this.need(caller, id, 'space.delete');
     await this.store.deleteSpace(id);
     return { deleted: id };
   }
 
-  /** Before an account goes: it leaves every team space, and a space it owns alone goes with it. A space it owns with
-   *  others must be handed over first; nothing is removed until every space passes that check. */
+  /** Before an account goes (a person's own request): it leaves every team space, and a space it owns alone goes with it.
+   *  A space it owns with others must be handed over first; nothing is removed until every space passes that check. */
   async deleteAccount(uid: string) {
     assertUid(uid);
     const mine = await this.store.spacesOf(uid), owned = mine.filter(s => s.role === 'owner');
@@ -109,16 +136,20 @@ export class Spaces {
     await this.store.deleteAccount(uid);
   }
 
-  private async member(uid: string, id: string): Promise<Membership> {
-    assertUid(uid);
+  /** The relation tuple behind a call: the caller's membership, or a team agent's delegation by this space. */
+  private async relation(caller: Caller, id: string): Promise<Rel> {
     if (typeof id !== 'string' || !SPACE_ID.test(id)) throw new LedgerError('invalid', 'space is "personal" or a team space id');
-    const m = await this.store.membership(id, uid);
-    if (!m) throw new LedgerError('not_found', 'No such space');
-    return m;
+    if (caller.kind === 'team_agent') return { relation: caller.space === id && await this.store.space(id) ? 'delegate' : 'none' };
+    const m = await this.store.membership(id, assertUid(caller.uid));
+    return m ? { relation: m.role, member: m } : { relation: 'none' };
   }
-  private async owner(uid: string, id: string): Promise<Membership> {
-    const m = await this.member(uid, id);
-    if (m.role !== 'owner') throw new LedgerError('forbidden', 'Only the space\'s owner can do this');
-    return m;
+  private check(caller: Caller, relation: Relation, action: Action) {
+    const d = decide(caller, relation, action);
+    if (!d.allow) throw new LedgerError(d.code!, d.code === 'not_found' ? 'No such space' : d.why);
+  }
+  private async need(caller: Caller, id: string, action: Action): Promise<Rel> {
+    const r = await this.relation(caller, id);
+    this.check(caller, r.relation, action);
+    return r;
   }
 }

@@ -8,7 +8,7 @@
 //   keys/{uid}                         the account's data key, wrapped by the KMS key; deleting it shreds the account
 //   users/{uid}/spaces/{id}            the team spaces the account belongs to: {role, since}
 //   spaces/{id}                        a team space: {owner, created, enc} — its name is sealed under the space's own key
-//   spaces/{id}/members/{uid}          {role, since, by}
+//   spaces/{id}/members/{uid}          {role, since, by, projects?} — a guest's projects as "YYYY:<package code>"
 //   spaces/{id}/keys/dek               the space's data key, wrapped like an account's; deleting it shreds the space
 //   spaces/{id}/rows|events|inbox|secrets   the team ledger, laid out and sealed exactly like a personal one
 // year and code stay readable so queries can select a year or a task, and memberships (uid, role) so access can be
@@ -28,6 +28,10 @@ import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const expire = (ms: number) => Timestamp.fromMillis(ms);
 const SPACE_OWNER_RE = /^spaces\/s_[A-Za-z0-9_-]{22}$/;
+
+/** A membership as stored: role, since, by, and a guest's projects ("YYYY:<package code>", plaintext like a row's code). */
+const memberOf = (uid: string, d: Record<string, unknown>): Membership =>
+  ({ uid, role: d.role as SpaceRole, since: d.since as number, by: d.by as string, ...(Array.isArray(d.projects) ? { projects: d.projects as string[] } : {}) });
 
 /** The document a ledger owner's collections hang from: users/{uid} for an account, spaces/{id} for a team space. */
 function home(db: Firestore, owner: string) {
@@ -198,15 +202,15 @@ export class FirestoreStore implements Store {
   }
   async membership(id: string, uid: string): Promise<Membership | null> {
     const d = await this.memberDoc(id, uid).get();
-    return d.exists ? { uid, role: d.get('role'), since: d.get('since'), by: d.get('by') } : null;
+    return d.exists ? memberOf(uid, d.data()!) : null;
   }
   async members(id: string): Promise<Membership[]> {
     const s = await this.spaceDoc(id).collection('members').get();
-    return s.docs.map(d => ({ uid: d.id, role: d.get('role'), since: d.get('since'), by: d.get('by') }));
+    return s.docs.map(d => memberOf(d.id, d.data()));
   }
   async putMember(id: string, m: Membership) {
     const b = this.db.batch();
-    b.set(this.memberDoc(id, m.uid), { role: m.role, since: m.since, by: m.by });
+    b.set(this.memberDoc(id, m.uid), { role: m.role, since: m.since, by: m.by, ...(m.projects ? { projects: m.projects } : {}) });
     b.set(this.indexDoc(m.uid, id), { role: m.role, since: m.since });
     await b.commit();
   }

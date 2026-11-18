@@ -15,6 +15,8 @@ import { TokenIssuer } from '../src/auth/tokens.js';
 import { devVerifier } from '../src/auth/identity.js';
 import { createApp } from '../src/app.js';
 import { Ledger } from '../src/wbs/service.js';
+import { Spaces } from '../src/wbs/spaces.js';
+import { person } from '../src/wbs/access.js';
 
 const LEDGER = process.env.HUB_TEST_LEDGER || '';   // a real wbs.csv to round-trip (optional)
 const EVENTS = process.env.HUB_TEST_EVENTS || '';
@@ -117,7 +119,7 @@ test('MCP tools: add, duplicate guard, steps, update, isolation, scope-limited t
     const t = await connect(base, { uid: 'u_j', clientName: 'Claude' });
     const c = await mcp(base, t.access_token);
     const names = (await c.listTools()).tools.map(x => x.name).sort();
-    assert.deepEqual(names, ['wbs_add', 'wbs_brief', 'wbs_export', 'wbs_get', 'wbs_inbox_add', 'wbs_inbox_list', 'wbs_inbox_mark', 'wbs_packages', 'wbs_search', 'wbs_summary', 'wbs_update']);
+    assert.deepEqual(names, ['wbs_add', 'wbs_brief', 'wbs_export', 'wbs_get', 'wbs_inbox_add', 'wbs_inbox_list', 'wbs_inbox_mark', 'wbs_packages', 'wbs_search', 'wbs_spaces', 'wbs_summary', 'wbs_update']);
     // a new package needs its area; then tasks take the next free code
     const a1 = json(await c.callTool({ name: 'wbs_add', arguments: { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: 'PP WBS 허브 MCP 서버와 OAuth 인가 서버 구현', start: '2026-11-06', status: '진행 중', evidence: 'cc:test' } }));
     assert.equal(a1.created.code, '5.3.1'); assert.equal(a1.created.source, 'Claude');
@@ -168,6 +170,45 @@ test('REST: audience binding, search, duplicate 409, scope check', async () => {
     const ro = await connect(base, { uid: 'u_r', resource: `${base}/v1`, scope: 'wbs.read' });
     const w = await fetch(`${base}/v1/rows`, { method: 'POST', headers: { authorization: `Bearer ${ro.access_token}`, 'content-type': 'application/json' }, body: '{}' });
     assert.equal(w.status, 403);
+  } finally { await close(); }
+});
+
+test('team space over MCP and REST: agents list it, write and read its plan; a guest sees its project; outsiders see nothing', async () => {
+  const { base, store, close } = await boot();
+  try {
+    const spaces = new Spaces(store), s = await spaces.create(person('u_j'), '연구실');   // people create and staff spaces
+    await spaces.setMember(person('u_j'), s.id, 'u_g', 'guest', ['2026:4.3']);
+    const c = await mcp(base, (await connect(base, { uid: 'u_j', clientName: 'Claude' })).access_token);
+    assert.deepEqual(json(await c.callTool({ name: 'wbs_spaces', arguments: {} })).map((x: { id: string; role: string }) => `${x.id === s.id ? 'team' : x.id}:${x.role}`), ['personal:owner', 'team:owner']);
+    const t1 = json(await c.callTool({ name: 'wbs_add', arguments: { space: s.id, area: '4 창업·제품', package: '4.3 서비스 개발', task: '팀 계획: 허브 공간 전환 API', start: '2026-11-18', status: '진행 중' } }));
+    const t2 = json(await c.callTool({ name: 'wbs_add', arguments: { space: s.id, area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: '팀 계획: 헌장 동의 기록', start: '2026-11-18', status: '진행 중' } }));
+    assert.deepEqual([t1.created.code, t2.created.code], ['4.3.1', '5.3.1']);
+    assert.equal(json(await c.callTool({ name: 'wbs_search', arguments: {} })).total, 0, 'the personal ledger got nothing');
+    assert.equal(json(await c.callTool({ name: 'wbs_search', arguments: { space: s.id } })).total, 2);
+    const u = json(await c.callTool({ name: 'wbs_update', arguments: { space: s.id, year: '2026', code: '5.3.1', status: '완료' } }));
+    assert.equal(u.updated.status, '완료');
+    await c.close();
+    // the guest's agent: its project only, no writing
+    const g = await mcp(base, (await connect(base, { uid: 'u_g', clientName: 'ChatGPT' })).access_token);
+    assert.deepEqual(json(await g.callTool({ name: 'wbs_search', arguments: { space: s.id } })).rows.map((r: { code: string }) => r.code), ['4.3.1']);
+    const gw = await g.callTool({ name: 'wbs_add', arguments: { space: s.id, package: '4.3', task: '게스트가 쓰려는 계획 항목', start: '2026-11-18', status: '진행 중' } });
+    assert.equal(gw.isError, true); assert.equal(json(gw).error, 'forbidden');
+    await g.close();
+    // an outsider is told nothing exists
+    const x = await mcp(base, (await connect(base, { uid: 'u_x', clientName: 'Gemini' })).access_token);
+    const xr = await x.callTool({ name: 'wbs_get', arguments: { space: s.id, year: '2026', code: '4.3.1' } });
+    assert.equal(xr.isError, true); assert.equal(json(xr).error, 'not_found');
+    await x.close();
+    // REST: the same space by query parameter; a read grant is stopped by its scope, a guest by the table
+    const ro = await connect(base, { uid: 'u_j', resource: `${base}/v1`, scope: 'wbs.read', clientName: 'ChatGPT Actions' });
+    const h = { authorization: `Bearer ${ro.access_token}`, 'content-type': 'application/json' };
+    assert.equal((await (await fetch(`${base}/v1/spaces`, { headers: h })).json()).length, 2);
+    assert.equal((await (await fetch(`${base}/v1/rows?space=${s.id}`, { headers: h })).json()).total, 2);
+    assert.equal((await fetch(`${base}/v1/rows?space=${s.id}`, { method: 'POST', headers: h, body: '{}' })).status, 403);
+    const gr = await connect(base, { uid: 'u_g', resource: `${base}/v1`, clientName: 'ChatGPT Actions' });
+    const gp = await fetch(`${base}/v1/rows?space=${s.id}`, { method: 'POST', headers: { authorization: `Bearer ${gr.access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ package: '4.3', task: '게스트가 REST로 쓰려는 계획 항목', start: '2026-11-18', status: '진행 중' }) });
+    assert.equal(gp.status, 403); assert.equal((await gp.json()).error, 'forbidden');
   } finally { await close(); }
 });
 

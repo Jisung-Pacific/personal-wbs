@@ -113,11 +113,11 @@ export class MemoryStore implements Store {
   async spacesOf(uid: string) {
     return [...this.crew].flatMap(([id, ms]) => { const m = ms.get(uid); return m ? [{ id, role: m.role }] : []; });
   }
-  async membership(id: string, uid: string) { const m = this.crew.get(id)?.get(uid); return m ? { ...m } : null; }
-  async members(id: string) { return [...(this.crew.get(id)?.values() ?? [])].map(m => ({ ...m })); }
+  async membership(id: string, uid: string) { const m = this.crew.get(id)?.get(uid); return m ? structuredClone(m) : null; }
+  async members(id: string) { return [...(this.crew.get(id)?.values() ?? [])].map(m => structuredClone(m)); }
   async putMember(id: string, m: Membership) {
     const ms = this.crew.get(id); if (!ms) throw new Error(`no space ${id}`);
-    ms.set(m.uid, { ...m });
+    ms.set(m.uid, structuredClone(m));
   }
   async removeMember(id: string, uid: string) { this.crew.get(id)?.delete(uid); }
   async setOwner(id: string, uid: string) {

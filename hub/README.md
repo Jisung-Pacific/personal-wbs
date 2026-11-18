@@ -10,7 +10,7 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 
 | Path | For |
 | --- | --- |
-| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_summary`, `wbs_export`, and with `wbs.write` also `wbs_add`, `wbs_update`. A client sees only the tools its scopes allow. |
+| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, and with `wbs.write` also `wbs_add`, `wbs_update`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
@@ -43,11 +43,13 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   bound to its account and path, so the database, its exports and backups hold ciphertext; only the year and code of a
   row stay readable for queries. The runtime may use that one KMS key and nothing else; deleting an account deletes its
   wrapped key first, which makes every copy unreadable (crypto-shredding). Code: `src/crypto/envelope.ts`.
-- **Spaces**: an account's own ledger is its personal space. A team space (one owner, equal members, read-only guests,
-  at most 10 people) keeps its ledger under `spaces/<id>` with its own data key, sealed apart from every member's personal
-  ledger; only memberships (account id and role) stay readable, so access can be checked. Deleting a space shreds its
-  key first; an account that owns a space with other members hands it over before it can be deleted. Code:
-  `src/wbs/spaces.ts`.
+- **Spaces**: an account's own ledger is its personal space. A team space (one owner, equal members, guests who read
+  only the projects they are assigned, at most 10 people) keeps its ledger under `spaces/<id>` with its own data key,
+  sealed apart from every member's personal ledger; only memberships (account id, role, a guest's project codes) stay
+  readable, so access can be checked. Who may do what comes from one permission table (`src/wbs/access.ts`) over those
+  relation tuples: agents act within their person's role and granted scopes and never manage a space (inviting, billing,
+  the charter, handing over, deleting stay with people); outsiders are told a space does not exist. Deleting a space
+  shreds its key first; an account that owns a space with other members hands it over before it can be deleted.
 - **Tokens**: ES256 JWT access tokens (1 h) bound to one resource (`/mcp`, `/v1` or the hub); refresh tokens (30 days)
   rotate and a reused one revokes the grant; codes (5 min) and parked requests (10 min) work once. Only SHA-256 hashes
   of secrets are stored, and a TTL policy removes expired OAuth state.

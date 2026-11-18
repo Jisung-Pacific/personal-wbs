@@ -2,7 +2,7 @@
 // ledger transaction, so two agents logging at once can never take the same code. The rules are the ledger's own:
 // one row per dated deliverable, permanent codes (max + 1 in the package or under the parent), every change logged.
 import { z } from 'zod';
-import type { LedgerEvent, Owner, Row, Store } from '../store/types.js';
+import type { LedgerEvent, Owner, Row, RowFilter, Store } from '../store/types.js';
 import {
   DATE_RE, STATUSES, agentLabel, appendEvidence, codeKey, dateText, emptyRow, eventsFromCsv, eventsToCsv, fileOrderOf, mergeSource,
   overlap, rowsFromCsv, rowsToCsv, sortRows, todayKst, tokens, type FileOrder,
@@ -59,11 +59,21 @@ const brief = (r: Row) => ({
   status: r.status, start: r.start, end: r.end, due: r.due || undefined, blocker: r.blocker || undefined, source: r.source,
 });
 
+/** What a read sees: one ledger, and for a guest only the projects it is assigned ("YYYY:<package code>"). A bare owner
+ *  string is the whole ledger. Views come from Spaces.view, which applies the permission table. */
+export interface View { owner: Owner; projects?: string[] }
+const viewOf = (v: View | Owner): View => typeof v === 'string' ? { owner: v } : v;
+const projectOf = (r: { year: string; code: string }) => `${r.year}:${r.code.split('.').slice(0, 2).join('.')}`;
+const visible = (v: View) => (r: { year: string; code: string }) => !v.projects || v.projects.includes(projectOf(r));
+
 export class Ledger {
   constructor(private store: Store) {}
 
-  async search(uid: string, input: z.infer<typeof SearchInput>) {
-    const rows = await this.store.rows(uid, { year: input.year, status: input.status, packageCode: input.package });
+  private async rowsIn(v: View, f?: RowFilter) { return (await this.store.rows(v.owner, f)).filter(visible(v)); }
+  private async eventsIn(v: View, year?: string, code?: string) { return (await this.store.events(v.owner, year, code)).filter(visible(v)); }
+
+  async search(at: View | Owner, input: z.infer<typeof SearchInput>) {
+    const rows = await this.rowsIn(viewOf(at), { year: input.year, status: input.status, packageCode: input.package });
     let hits = rows;
     if (input.q) {
       const q = input.q.toLowerCase(), qt = tokens(input.q);
@@ -73,16 +83,16 @@ export class Ledger {
     return { total: hits.length, rows: sortRows(hits).slice(0, limit).map(brief) };
   }
 
-  async get(uid: string, year: string, code: string) {
-    const row = await this.store.row(uid, year, code);
-    if (!row) throw new LedgerError('not_found', `No row ${year} ${code}`);
-    const steps = (await this.store.rows(uid, { year, parentCode: code })).map(brief);
-    const history = (await this.store.events(uid, year, code)).slice(-20);
+  async get(at: View | Owner, year: string, code: string) {
+    const v = viewOf(at), row = await this.store.row(v.owner, year, code);
+    if (!row || !visible(v)(row)) throw new LedgerError('not_found', `No row ${year} ${code}`);
+    const steps = (await this.rowsIn(v, { year, parentCode: code })).map(brief);
+    const history = (await this.eventsIn(v, year, code)).slice(-20);
     return { row, steps, history };
   }
 
-  async packages(uid: string, year: string) {
-    const rows = await this.store.rows(uid, { year }), by = new Map<string, Row[]>();
+  async packages(at: View | Owner, year: string) {
+    const rows = await this.rowsIn(viewOf(at), { year }), by = new Map<string, Row[]>();
     for (const r of rows) { const k = r.package; if (!by.has(k)) by.set(k, []); by.get(k)!.push(r); }
     return [...by.entries()].sort((a, b) => codeKey(a[0].split(' ')[0]).localeCompare(codeKey(b[0].split(' ')[0]))).map(([pkg, rs]) => {
       const top = rs.filter(r => r.level === '3').map(r => Number(r.code.split('.').pop()));
@@ -92,19 +102,19 @@ export class Ledger {
     });
   }
 
-  async summary(uid: string, year?: string) {
-    const rows = await this.store.rows(uid, year ? { year } : undefined), leaves = leafSet(rows);
+  async summary(at: View | Owner, year?: string) {
+    const v = viewOf(at), rows = await this.rowsIn(v, year ? { year } : undefined), leaves = leafSet(rows);
     const byYear: Record<string, Record<string, number>> = {};
     for (const r of leaves) { (byYear[r.year] ||= {})[r.status] = (byYear[r.year][r.status] || 0) + 1; }
     const open = sortRows(leaves.filter(r => r.status === '진행 중' || r.status === '대기·심사'))
       .sort((a, b) => (b.last_progress || b.start).localeCompare(a.last_progress || a.start)).slice(0, 15).map(brief);
-    const recent = (await this.store.events(uid)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
+    const recent = (await this.eventsIn(v)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
     return { leaf_tasks: leaves.length, by_year_status: byYear, open_recent: open, recent_events: recent };
   }
 
   /** The compact picture a planning or advising agent starts from (wbs/brief.ts). */
-  async brief(uid: string, year?: string) {
-    return buildBrief(await this.store.rows(uid), { today: todayKst(), year });
+  async brief(at: View | Owner, year?: string) {
+    return buildBrief(await this.rowsIn(viewOf(at)), { today: todayKst(), year });
   }
 
   /** Adds one row with the next free code. Refuses an obvious duplicate unless the caller says it is different work.
@@ -197,8 +207,8 @@ export class Ledger {
   }
 
   /** wbs.csv + events.csv. `order` picks the year order of wbs.csv rows (newest first unless the ledger is kept oldest first). */
-  async exportCsv(uid: string, order: FileOrder = 'newest') {
-    const [rows, evs] = await Promise.all([this.store.rows(uid), this.store.events(uid)]);
+  async exportCsv(at: View | Owner, order: FileOrder = 'newest') {
+    const v = viewOf(at), [rows, evs] = await Promise.all([this.rowsIn(v), this.eventsIn(v)]);
     return { wbs: rowsToCsv(rows, true, order), events: eventsToCsv(evs) };
   }
 

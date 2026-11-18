@@ -13,7 +13,8 @@ export const isSpaceOwner = (o: Owner) => o.startsWith('spaces/');
 export type SpaceRole = 'owner' | 'member' | 'guest';
 /** A team space. The personal space needs no record: it is the account itself. */
 export interface SpaceRecord { id: string; name: string; owner: string; created: number }
-export interface Membership { uid: string; role: SpaceRole; since: number; by: string }
+/** `projects`: for a guest, the projects (packages, as "YYYY:<code>", e.g. "2026:4.3") whose plan and work it may read. */
+export interface Membership { uid: string; role: SpaceRole; since: number; by: string; projects?: string[] }
 
 /** One ledger row: the 22 columns of wbs.csv, under English keys. All values are strings ('' when empty). */
 export interface Row {
