@@ -64,11 +64,17 @@ export function eventsFromCsv(text: string): LedgerEvent[] {
 
 /** Codes compare numerically per segment (1.10 after 1.9). */
 export const codeKey = (c: string) => c.split('.').map(n => n.padStart(4, '0')).join('.');
-/** File order: newest year first, then code. */
+/** Newest year first, then code: the order of every list and, by default, of wbs.csv (the package's sort rule). */
 export const sortRows = (rows: Row[]) => [...rows].sort((a, b) => b.year.localeCompare(a.year) || codeKey(a.code).localeCompare(codeKey(b.code)));
+/** Year order of the rows in wbs.csv. Some ledgers are kept oldest year first; an export can keep that order. */
+export type FileOrder = 'newest' | 'oldest';
+const sortRowsOldest = (rows: Row[]) => [...rows].sort((a, b) => a.year.localeCompare(b.year) || codeKey(a.code).localeCompare(codeKey(b.code)));
+/** The year order a file already uses: oldest first when its first row's year is earlier than its last row's. */
+export const fileOrderOf = (rows: Row[]): FileOrder => rows.length > 1 && rows[0].year < rows[rows.length - 1].year ? 'oldest' : 'newest';
 
-export function rowsToCsv(rows: Row[], bom = true): string {
-  return (bom ? '﻿' : '') + toCsv([ROW_COLUMNS.map(([, h]) => h), ...sortRows(rows).map(r => ROW_COLUMNS.map(([k]) => r[k] ?? ''))]);
+export function rowsToCsv(rows: Row[], bom = true, order: FileOrder = 'newest'): string {
+  const sorted = order === 'oldest' ? sortRowsOldest(rows) : sortRows(rows);
+  return (bom ? '﻿' : '') + toCsv([ROW_COLUMNS.map(([, h]) => h), ...sorted.map(r => ROW_COLUMNS.map(([k]) => r[k] ?? ''))]);
 }
 export function eventsToCsv(evs: LedgerEvent[], bom = true): string {
   return (bom ? '﻿' : '') + toCsv([EVENT_COLUMNS.map(([, h]) => h), ...evs.map(e => EVENT_COLUMNS.map(([k]) => e[k] ?? ''))]);

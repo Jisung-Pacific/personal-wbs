@@ -83,6 +83,9 @@ firebase emulators:exec --only firestore "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
 4. Your own domain: put a reverse proxy in front (`deploy/cloudflare`; Cloud Run domain mapping is not offered in every
    region), rerun bootstrap with `PROXY=1 PUBLIC_URL=https://<domain>` before anyone connects, since the issuer is fixed.
 5. Import an existing ledger: `GOOGLE_CLOUD_PROJECT=… HUB_KMS_KEY=… node dist/scripts/import.js <uid> wbs.csv events.csv`.
+   It reads everything back through the database and the data key and exits non-zero unless the export equals the files.
+   A ledger kept oldest year first keeps that order when exported with `order=oldest` (`/v1/export?order=oldest`, or
+   the `order` argument of `wbs_export`); the default is newest year first.
 6. Connect Claude first, then the other agents.
 
 Planning and advising agents start from `wbs_brief` (REST `GET /v1/brief`): status counts, six-month flow, where the

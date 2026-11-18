@@ -13,5 +13,15 @@ const kek = process.env.HUB_KMS_KEY ? KmsKek.withDefaultCredentials(process.env.
   : process.env.HUB_LOCAL_KEK && process.env.FIRESTORE_EMULATOR_HOST ? LocalKek.fromBase64(process.env.HUB_LOCAL_KEK) : null;
 if (!kek) { console.error('HUB_KMS_KEY is required (HUB_LOCAL_KEK only against the emulator)'); process.exit(2); }
 const store = new FirestoreStore(process.env.GOOGLE_CLOUD_PROJECT, process.env.HUB_FIRESTORE_DB || 'ppwbs', kek);
-const out = await new Ledger(store).importCsv(uid, readFileSync(wbsPath, 'utf8'), eventsPath ? readFileSync(eventsPath, 'utf8') : undefined);
-console.log(`imported into users/${uid}: ${out.rows} rows, ${out.events} events`);
+const ledger = new Ledger(store);
+const wbs = readFileSync(wbsPath, 'utf8'), events = eventsPath ? readFileSync(eventsPath, 'utf8') : undefined;
+const out = await ledger.importCsv(uid, wbs, events);
+console.log(`imported into users/${uid}: ${out.rows} rows, ${out.events} events (rows ${out.order} year first)`);
+
+// read everything back through the database and the data key: the export must equal the files that went in
+const back = await ledger.exportCsv(uid, out.order);
+const firstDiff = (a: string, b: string) => { let i = 0; while (i < a.length && a[i] === b[i]) i++; return i; };
+const okWbs = back.wbs === wbs, okEvents = events === undefined || back.events === events;
+console.log(`round trip: wbs.csv ${okWbs ? 'identical' : `differs at character ${firstDiff(back.wbs, wbs)}`}`
+  + (events === undefined ? '' : `, events.csv ${okEvents ? 'identical' : `differs at character ${firstDiff(back.events, events)}`}`));
+if (!okWbs || !okEvents) process.exit(1);

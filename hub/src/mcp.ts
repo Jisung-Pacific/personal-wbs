@@ -63,8 +63,9 @@ export function buildMcp(ledger: Ledger, actor: Actor, scopes: string[], version
     server.registerTool('wbs_export', {
       title: 'Export the whole ledger as CSV',
       description: 'The full wbs.csv and events.csv (hundreds of KB). For dashboards and backups; do not call it to answer a question in conversation — use wbs_search or wbs_summary.',
-      inputSchema: {}, annotations: ro,
-    }, async () => run(() => ledger.exportCsv(actor.uid)));
+      inputSchema: { order: z.enum(['newest', 'oldest']).optional().describe('Year order of the wbs.csv rows: newest first (default) or oldest first') },
+      annotations: ro,
+    }, async a => run(() => ledger.exportCsv(actor.uid, a.order)));
 
     if (inbox) server.registerTool('wbs_inbox_list', {
       title: 'Read the inbox',

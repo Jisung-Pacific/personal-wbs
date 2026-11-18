@@ -4,8 +4,8 @@
 import { z } from 'zod';
 import type { LedgerEvent, Row, Store } from '../store/types.js';
 import {
-  DATE_RE, STATUSES, agentLabel, appendEvidence, codeKey, dateText, emptyRow, eventsFromCsv, eventsToCsv, mergeSource,
-  overlap, rowsFromCsv, rowsToCsv, sortRows, todayKst, tokens,
+  DATE_RE, STATUSES, agentLabel, appendEvidence, codeKey, dateText, emptyRow, eventsFromCsv, eventsToCsv, fileOrderOf, mergeSource,
+  overlap, rowsFromCsv, rowsToCsv, sortRows, todayKst, tokens, type FileOrder,
 } from './model.js';
 import { buildBrief } from './brief.js';
 
@@ -195,16 +195,18 @@ export class Ledger {
     });
   }
 
-  async exportCsv(uid: string) {
+  /** wbs.csv + events.csv. `order` picks the year order of wbs.csv rows (newest first unless the ledger is kept oldest first). */
+  async exportCsv(uid: string, order: FileOrder = 'newest') {
     const [rows, evs] = await Promise.all([this.store.rows(uid), this.store.events(uid)]);
-    return { wbs: rowsToCsv(rows), events: eventsToCsv(evs) };
+    return { wbs: rowsToCsv(rows, true, order), events: eventsToCsv(evs) };
   }
 
-  /** Bulk import of an existing wbs.csv (+ events.csv) into an empty ledger: the migration path from the file era. */
+  /** Bulk import of an existing wbs.csv (+ events.csv) into an empty ledger: the migration path from the file era.
+   *  `order` reports the file's year order; passing it back to exportCsv reproduces the file byte for byte. */
   async importCsv(uid: string, wbsText: string, eventsText?: string) {
     const rows = rowsFromCsv(wbsText), evs = eventsText ? eventsFromCsv(eventsText) : [];
     if ((await this.store.rows(uid)).length) throw new LedgerError('invalid', 'Import only into an empty ledger');
     await this.store.bulkImport(uid, rows, evs);
-    return { rows: rows.length, events: evs.length };
+    return { rows: rows.length, events: evs.length, order: fileOrderOf(rows) };
   }
 }

@@ -133,6 +133,9 @@ test('MCP tools: add, duplicate guard, steps, update, isolation, scope-limited t
     assert.equal(g.steps.length, 1); assert.deepEqual(g.history.map((e: { event: string }) => e.event), ['생성', '상태']);
     const bad = await c.callTool({ name: 'wbs_add', arguments: { package: '5.3', task: '날짜 형식 확인용', start: '6 Nov', status: '완료' } });
     assert.equal(bad.isError, true);
+    const ex = json(await c.callTool({ name: 'wbs_export', arguments: { order: 'oldest' } }));
+    assert.ok(ex.wbs.includes('5.3.1.1') && ex.events.includes('5.3.1'));
+    assert.equal((await c.callTool({ name: 'wbs_export', arguments: { order: 'sideways' } })).isError, true);
     await c.close();
     // another account sees an empty ledger
     const o = await connect(base, { uid: 'u_other', clientName: 'ChatGPT' });
@@ -160,6 +163,8 @@ test('REST: audience binding, search, duplicate 409, scope check', async () => {
     assert.equal(dup.status, 409);
     const found = await (await fetch(`${base}/v1/rows?q=${encodeURIComponent('플러그인')}`, { headers: h })).json();
     assert.equal(found.total, 1);
+    const ex = await (await fetch(`${base}/v1/export?order=oldest`, { headers: h })).json();
+    assert.ok(ex.wbs.startsWith('﻿연도,WBS,') && ex.wbs.includes('4.3.1'));
     const ro = await connect(base, { uid: 'u_r', resource: `${base}/v1`, scope: 'wbs.read' });
     const w = await fetch(`${base}/v1/rows`, { method: 'POST', headers: { authorization: `Bearer ${ro.access_token}`, 'content-type': 'application/json' }, body: '{}' });
     assert.equal(w.status, 403);
@@ -171,11 +176,31 @@ test('the real ledger round-trips byte for byte', { skip: !LEDGER }, async () =>
   const wbs = readFileSync(LEDGER, 'utf8'), events = EVENTS ? readFileSync(EVENTS, 'utf8') : undefined;
   const n = await ledger.importCsv('u_x', wbs, events);
   assert.ok(n.rows > 700);
-  const out = await ledger.exportCsv('u_x');
+  const out = await ledger.exportCsv('u_x', n.order);
   assert.equal(out.wbs, wbs, 'wbs.csv identical after import → export');
   if (events) assert.equal(out.events, events, 'events.csv identical');
   const p = await ledger.packages('u_x', '2026');
   assert.ok(p.some(x => x.package.startsWith('5.3 ')));
+});
+
+test('a ledger kept oldest year first round-trips in its own order; the default export and search are newest first', async () => {
+  const ledger = new Ledger(new MemoryStore());
+  // header + rows oldest year first, 1.10 after 1.9; quoted cells (comma, quote, line break) must come back as written
+  const head = '연도,WBS,레벨,대분류,중분류,상위 작업,작업·산출물,시작일,종료일,일자(원문),시작월,상태,핵심성과,출처,마감일,중요도,크기,선행,막힘 사유,최근 진행일,목표,근거';
+  const row = (y: string, c: string, task: string) =>
+    `${y},${c},3,1 연구,1.1 논문,,${task},${y}-01-02,,${y}-01-02,${y}-01,완료,,Claude,,,,,,,,`;
+  const wbs = '﻿' + [head,
+    row('2025', '1.1.2', '"쉼표, 따옴표 ""인용"" 포함"'),
+    row('2026', '1.1.9', '아홉 번째 작업'),
+    row('2026', '1.1.10', '"열 번째 작업\r\n둘째 줄"'),
+  ].join('\r\n') + '\r\n';
+  const n = await ledger.importCsv('u_o', wbs);
+  assert.equal(n.order, 'oldest');
+  assert.equal((await ledger.exportCsv('u_o', n.order)).wbs, wbs, 'export in the file\'s order reproduces it byte for byte');
+  const years = (await ledger.exportCsv('u_o')).wbs.split('\r\n').slice(1, -1).map(l => l.slice(0, 4)).filter(y => /^\d{4}$/.test(y));
+  assert.deepEqual(years, ['2026', '2026', '2025'], 'default export: newest year first');
+  const s = await ledger.search('u_o', {});
+  assert.deepEqual(s.rows.map(r => `${r.year} ${r.code}`), ['2026 1.1.9', '2026 1.1.10', '2025 1.1.2']);
 });
 
 test('confidential client (GPT Actions style): secret instead of PKCE, wrong secret refused', async () => {

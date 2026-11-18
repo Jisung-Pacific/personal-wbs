@@ -28,7 +28,7 @@ export function restRouter(ledger: Ledger, inbox: Inbox): Router {
   r.get('/packages/:year', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.packages(req.actor!.uid, String(req.params.year))));
   r.get('/brief', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.brief(req.actor!.uid, req.query.year as string | undefined)));
   r.get('/summary', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.summary(req.actor!.uid, req.query.year as string | undefined)));
-  r.get('/export', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.exportCsv(req.actor!.uid)));
+  r.get('/export', need('wbs.read'), (req: Authed, res) => send(res, () => ledger.exportCsv(req.actor!.uid, req.query.order === 'oldest' ? 'oldest' : 'newest')));
   r.post('/rows', need('wbs.write'), (req: Authed, res) => send(res, () => ledger.add(req.actor!, req.body)));
   r.patch('/rows/:year/:code', need('wbs.write'), (req: Authed, res) => send(res, () => ledger.update(req.actor!, { ...req.body, year: String(req.params.year), code: String(req.params.code) })));
   r.post('/inbox', need('wbs.write'), (req: Authed, res) => send(res, () => inbox.add(req.actor!.uid, req.body)));
