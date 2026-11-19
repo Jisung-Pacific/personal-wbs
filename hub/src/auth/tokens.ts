@@ -41,6 +41,19 @@ export class TokenIssuer {
     return { token, expiresIn: this.ttl };
   }
 
+  /** A first-party session for a person on the hub's own pages (/app): who signed in, for whom only this hub's pages
+   *  are the audience, typed so it can never pass as an access token. */
+  async session(uid: string, ttlSeconds: number): Promise<string> {
+    return new SignJWT({})
+      .setProtectedHeader({ alg: 'ES256', kid: this.pub.kid, typ: 'session+jwt' })
+      .setIssuer(this.issuer).setSubject(uid).setAudience(`${this.issuer}/app`)
+      .setIssuedAt().setJti(random(12)).setExpirationTime(`${ttlSeconds}s`).sign(this.key);
+  }
+  async verifySession(token: string): Promise<string> {
+    const { payload } = await jwtVerify(token, this.verifyKey, { issuer: this.issuer, audience: `${this.issuer}/app`, typ: 'session+jwt', algorithms: ['ES256'] });
+    return String(payload.sub);
+  }
+
   /** Verifies signature, issuer, expiry and that the token was minted for one of `audiences`. */
   async verify(token: string, audiences: string[]): Promise<AccessClaims> {
     const { payload } = await jwtVerify(token, this.verifyKey, { issuer: this.issuer, audience: audiences, typ: 'at+jwt', algorithms: ['ES256'] });

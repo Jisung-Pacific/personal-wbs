@@ -73,6 +73,21 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   no intent and the work on them, and per person (owners and members see each other's, as the charter says; the team's
   agent sees counts; guests do not see it). Plan against actual names each item's intent, own or inherited. A team
   space's `wbs_brief` and `wbs_team` carry the alignment too.
+- **People's own pages** (`/app`): what only a person may do, by their own hand — make a team space, propose and agree
+  to its charter, add or remove members, leave — on the hub's own pages, signed in with the same accounts as the consent
+  page. The hub keeps a first-party session in an HttpOnly, SameSite=Strict cookie, accepts changes only with the
+  pages' own request header from this origin, and an agent's access token opens none of it.
+- **Work-style and direction cards** (execution WBS 4.2): each person answers the Mini-IPIP once (Donnellan, Oswald,
+  Baird & Lucas, 2006, *Psychological Assessment* 18(2), 192–203: twenty public-domain IPIP items, four a trait,
+  reverse-keyed as 6 − x, sums 4–20; reported alphas .65–.77). The scores stay in the person's own space, the answers
+  are not kept. A card published to a team carries the traits the person chooses (by default all but emotional
+  stability, which is shown as 24 − Neuroticism), a short direction (the role they want in a year, what they want to
+  grow, what they ask of the team) and work indicators inferred only from the rows they shared with that team (marked
+  inferred), each with the person's rebuttal beside it. Disclosure is symmetric section by section: one sees a section
+  of others' cards only while showing it oneself; someone without a card sees none. Owners and members publish and read
+  in person (agents neither fill, publish nor read cards); the team's delegated agent may read them. Nothing ranks,
+  averages or totals people, and cards feed nothing else in the hub. A team with employees switches on employee mode,
+  which removes every card; leaving a team takes one's card off it; reading others' cards is noted in their view logs.
 - **View log**: who read a person's shared rows is noted in that person's own space (the charter: views are visible to
   the one viewed) — the reader's account and role, the agent it read through or the team's own agent, the space, how
   many of the person's rows one read carried, and when (first and last time each day, how often). Only the person reads

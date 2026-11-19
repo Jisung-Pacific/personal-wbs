@@ -1,7 +1,7 @@
 // In-memory store for tests and local runs. Same contract as the Firestore store, including single-use semantics and
 // per-user transactions (a promise chain per uid serialises them, as Firestore's transactions would).
 import {
-  spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
+  spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
   type Intent, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store, type ViewEntry,
 } from './types.js';
 
@@ -138,7 +138,8 @@ export class MemoryStore implements Store {
     next.role = 'owner'; s.owner = uid;
   }
   async deleteSpace(id: string) {
-    this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.intentOf.delete(id); this.dropOwner(spaceOwner(id));
+    this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.intentOf.delete(id);
+    this.cardOf.delete(id); this.noCards.delete(id); this.dropOwner(spaceOwner(id));
   }
 
   // the team plan, people's links to it and the shared fields a space holds
@@ -169,6 +170,13 @@ export class MemoryStore implements Store {
     m.set(w.id, structuredClone(w));
   }
   async removeShared(id: string, workId: string) { this.sharedOf.get(id)?.delete(workId); }
+  private cardOf = new Map<string, Map<string, Card>>();
+  private noCards = new Set<string>();
+  async cards(id: string) { return [...(this.cardOf.get(id)?.values() ?? [])].map(c => structuredClone(c)); }
+  async putCard(id: string, c: Card) { let m = this.cardOf.get(id); if (!m) { m = new Map(); this.cardOf.set(id, m); } m.set(c.uid, structuredClone(c)); }
+  async removeCard(id: string, uid: string) { this.cardOf.get(id)?.delete(uid); }
+  async cardsOff(id: string) { return this.noCards.has(id); }
+  async setCardsOff(id: string, off: boolean) { if (off) this.noCards.add(id); else this.noCards.delete(id); }
   private intentOf = new Map<string, Map<string, Intent>>();
   async intents(id: string) { return [...(this.intentOf.get(id)?.values() ?? [])].map(i => structuredClone(i)); }
   async intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T> {

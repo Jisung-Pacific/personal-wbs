@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import {
-  isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
+  isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
   type Intent, type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
   type ViewEntry,
 } from './types.js';
@@ -312,6 +312,17 @@ export class FirestoreStore implements Store {
     const b = this.db.batch(); live.forEach(d => b.update(d.ref, { frozen: at })); await b.commit();
     return live.length;
   }
+
+  // cards (4.2): spaces/{id}/cards/{uid}, sealed under the space's key; employee mode is a plain flag on the space
+  private cardsCol(id: string) { return this.spaceDoc(id).collection('cards'); }
+  async cards(id: string) {
+    const s = await this.cardsCol(id).get();
+    return Promise.all(s.docs.map(async d => ({ uid: d.id, ...await this.envelope.open<Omit<Card, 'uid'>>(spaceOwner(id), `cards/${d.id}`, d.get('enc') as Sealed) })));
+  }
+  async putCard(id: string, c: Card) { const { uid, ...body } = c; await this.cardsCol(id).doc(uid).set({ enc: await this.envelope.seal(spaceOwner(id), `cards/${uid}`, body) }); }
+  async removeCard(id: string, uid: string) { await this.cardsCol(id).doc(uid).delete(); }
+  async cardsOff(id: string) { return (await this.spaceDoc(id).get()).get('cards_off') === true; }
+  async setCardsOff(id: string, off: boolean) { await this.spaceDoc(id).set({ cards_off: off }, { merge: true }); }
 
   private intentsCol(id: string) { return this.spaceDoc(id).collection('intents'); }
   private async openIntent(id: string, docId: string, d: Record<string, unknown>): Promise<Intent> {

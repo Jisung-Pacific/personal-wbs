@@ -18,6 +18,8 @@ charter.consent  Y     Y      N     N
 billing.manage   Y     N      N     N
 charter.propose  Y     Y      N     N
 cards.read       Y     Y      N     Y
+cards.publish    Y     Y      N     N
+cards.mode       Y     N      N     N
 space.transfer   Y     N      N     N
 space.delete     Y     N      N     N
 space.leave      N     Y      Y     N

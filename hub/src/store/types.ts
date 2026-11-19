@@ -33,6 +33,24 @@ export interface PlanItem {
   /** The team intent the item serves (execution WBS 4.1); an item without one inherits its nearest parent's. */
   intent?: string;
 }
+/** The five Mini-IPIP traits (Donnellan et al., 2006): Extraversion, Agreeableness, Conscientiousness, Neuroticism,
+ *  Intellect/Imagination; each a sum of four items, 4–20. */
+export const TRAITS = ['E', 'A', 'C', 'N', 'I'] as const;
+export type Trait = typeof TRAITS[number];
+/** What a card can show, each published by the person's own choice: a trait score, or the direction they wrote. */
+export const CARD_SECTIONS = [...TRAITS, 'direction'] as const;
+export type CardSection = typeof CARD_SECTIONS[number];
+/** A person's own Big Five self-report, kept in their own space (sealed as a secret): scores only, never the answers. */
+export interface Assessment { instrument: 'mini-ipip-20'; at: number; scores: Record<Trait, number> }
+/** A work-style and direction card a person publishes to one team (execution WBS 4.2). Only the sections they chose
+ *  are copied here; rebuttals are their own notes beside what the card shows, the inferred work indicators included. */
+export interface Card {
+  uid: string; sections: CardSection[]; scores: Partial<Record<Trait, number>>; measured: number;
+  direction?: { role: string; grow: string; ask: string };
+  rebuttal: { traits?: string; work?: string; direction?: string };
+  published: number; updated: number;
+}
+
 /** One of a team's intents (execution WBS 4.1; the charter's 의도 정렬: why, what, how), at most five in force, ranked.
  *  Plan items point at intents; the alignment shows where the shared work actually goes against them. */
 export interface Intent {
@@ -191,6 +209,13 @@ export interface Store {
   /** Freezes everything one person shares with a space (on leaving it or becoming a guest): the copies stay and stop
    *  following their rows. Returns how many. */
   freezeSharedBy(id: string, uid: string, at: number): Promise<number>;
+  /** The cards published to a team space (4.2), one per person, and whether the space has them switched off
+   *  (employee mode: a team with employees runs without cards, because consent is not free there). */
+  cards(id: string): Promise<Card[]>;
+  putCard(id: string, c: Card): Promise<void>;
+  removeCard(id: string, uid: string): Promise<void>;
+  cardsOff(id: string): Promise<boolean>;
+  setCardsOff(id: string, off: boolean): Promise<void>;
   /** A team space's intents (4.1), and the same read-and-write-atomically pattern as the plan. */
   intents(id: string): Promise<Intent[]>;
   intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T>;

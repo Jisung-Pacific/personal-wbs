@@ -7,6 +7,8 @@ import type { TokenIssuer } from './auth/tokens.js';
 import type { VerifyIdToken } from './auth/identity.js';
 import type { JoinHost } from './auth/host.js';
 import { oauthRouter, resourceMetadata, serverMetadata, teamOf } from './auth/oauth.js';
+import { peopleRouter } from './people.js';
+import { Cards } from './wbs/cards.js';
 import { Plans } from './wbs/plan.js';
 import { Views } from './wbs/views.js';
 import { buildMcp } from './mcp.js';
@@ -21,6 +23,7 @@ export const VERSION = '0.1.0';
 
 export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verifyIdToken: VerifyIdToken, joinHost?: JoinHost) {
   const app = express(), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views), inbox = new Inbox(store), u = cfg.publicUrl;
+  const cards = new Cards(store, spaces, views);   // after Plans: both hook into a person leaving a space
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));   // shared copies follow the rows they come from
   app.disable('x-powered-by');
   app.set('trust proxy', 1);   // Cloud Run's front end sets X-Forwarded-For; the rate limiter keys on the caller
@@ -40,6 +43,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   app.get(['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'], (_req, res) => { res.json(serverMetadata(cfg)); });
   app.get('/.well-known/jwks.json', (_req, res) => { res.set('Cache-Control', 'public, max-age=300').json(issuer.jwks()); });
   app.use('/oauth', oauthRouter({ cfg, store, issuer, verifyIdToken, joinHost }));
+  app.use('/app', peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards }));   // people's own acts, by their own hand
 
   /** Bearer check for one resource: a valid hub token minted for it (or for the hub as a whole). `path`: mcp, v1, or a
    *  team's own MCP address (mcp/t/<space id>). */

@@ -28,6 +28,7 @@ export function landingPage(cfg: Config, lang: 'ko' | 'en'): string {
   const pre = (s: string) => `<pre>${esc(s)}</pre>`;
   const cards = ko ? [
     card('Claude (웹·데스크톱·모바일)', '설정 → 커넥터 → 사용자 지정 커넥터 추가에 아래 MCP 주소를 넣고, 열리는 창에서 로그인·허용합니다.'),
+    card('사람이 직접 하는 일', `팀 공간 만들기, 헌장 제안·동의, 구성원 추가, 성향·방향성 카드(Big Five 20문항과 방향성, 서로 같은 조건으로 공개)는 에이전트가 대신하지 않습니다. <a href="${esc(cfg.publicUrl)}/app">${esc(cfg.publicUrl)}/app</a>에서 같은 계정으로 로그인해 직접 합니다.`),
     card('팀 환경 (Claude 팀·엔터프라이즈 조직)', `팀 공간마다 전용 주소가 있습니다: <code>${esc(mcp)}/t/&lt;팀 공간 id&gt;</code> (대시보드 팀 화면이나 wbs_spaces의 connector_url). 조직 소유자가 조직 설정의 커넥터에 이 주소를 한 번 넣으면 그 조직의 Claude는 자동으로 팀 환경이 됩니다. 기록한 일은 각자의 원장에 쌓이고 팀 계획 항목에 연결되며, 개인 원장의 나머지는 읽히지 않습니다. 개인 계정에는 위의 기본 주소를 씁니다.`),
     card('Claude Code', '터미널에서:', pre(`claude mcp add --transport http pp-wbs ${mcp}`)),
     card('ChatGPT', '설정의 앱·커넥터에서 개발자 모드를 켜고 MCP 서버 주소로 추가합니다. 디렉터리에 등록되면 앱 목록에서 바로 연결됩니다.'),
@@ -40,6 +41,7 @@ export function landingPage(cfg: Config, lang: 'ko' | 'en'): string {
     card('함수 호출 앱 · 스크립트', `OpenAPI: <a href="${esc(u)}/openapi.json">${esc(u)}/openapi.json</a> (OAuth 인가 코드 + PKCE).`),
   ] : [
     card('Claude (web, desktop, mobile)', 'Settings → Connectors → Add custom connector, paste the MCP address below, then sign in and allow.'),
+    card('What people do themselves', `Making a team space, proposing and agreeing to its charter, adding members, and the work-style and direction cards (twenty Big Five questions and a direction, disclosed to each other on equal terms) are never done by an agent. Sign in at <a href="${esc(cfg.publicUrl)}/app">${esc(cfg.publicUrl)}/app</a> with the same account and do them yourself.`),
     card('Team environment (Claude Team and Enterprise organisations)', `Each team space has its own address: <code>${esc(mcp)}/t/&lt;team space id&gt;</code> (on the dashboard's team screen, or connector_url in wbs_spaces). When an organisation owner adds it once as an organisation connector, that organisation's Claude works in the team's environment: work is recorded in each person's own ledger and linked to the team's plan, and the rest of the personal ledger stays out. Personal accounts use the address above.`),
     card('Claude Code', 'In a terminal:', pre(`claude mcp add --transport http pp-wbs ${mcp}`)),
     card('ChatGPT', 'Turn on developer mode in the app and connector settings and add the MCP server address. Once listed in the directory, connect it from the app list.'),

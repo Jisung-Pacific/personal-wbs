@@ -54,7 +54,7 @@ test('Firestore store: a team space keeps its ledger, key and members apart; del
   assert.deepEqual(await store.spacesOf(a), []); assert.equal((await store.rows(a)).length, 1, 'the personal ledger stays');
 });
 
-test('Firestore store: the team plan, intents, links and shared copies are sealed, freeze on leaving and go with the space', { skip: !on }, async () => {
+test('Firestore store: the team plan, intents, cards, links and shared copies are sealed, freeze on leaving and go with the space', { skip: !on }, async () => {
   const { Spaces } = await import('../src/wbs/spaces.js'), { Plans } = await import('../src/wbs/plan.js'), { person } = await import('../src/wbs/access.js');
   const { Views } = await import('../src/wbs/views.js');
   const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views);
@@ -73,8 +73,14 @@ test('Firestore store: the team plan, intents, links and shared copies are seale
   const seen = (await views.mine(person(b))).log[0].entries[0];
   assert.deepEqual([seen.viewer, seen.count, seen.rows], [a, 2, 1]);
   assert.equal((await store.links(b)).length, 1);
+  // cards (4.2): sealed per person under the space key, the employee-mode flag on the space, gone with the space
+  const card = { uid: a, sections: ['C', 'direction'] as ('C' | 'direction')[], scores: { C: 16 }, measured: 1, direction: { role: '제품', grow: '', ask: '' }, rebuttal: { work: '학회 준비' }, published: 1, updated: 1 };
+  await store.putCard(s.id, card);
+  assert.deepEqual(await store.cards(s.id), [card]);
+  assert.equal(await store.cardsOff(s.id), false); await store.setCardsOff(s.id, true); assert.equal(await store.cardsOff(s.id), true);
+  await store.setCardsOff(s.id, false);
   await spaces.removeMember(person(b), s.id, b);
   assert.ok((await store.shared(s.id))[0].frozen, 'the copy stays with the team, frozen');
   await spaces.remove(person(a), s.id);
-  assert.deepEqual([(await store.plan(s.id)).length, (await store.shared(s.id)).length, (await store.intents(s.id)).length], [0, 0, 0]);
+  assert.deepEqual([(await store.plan(s.id)).length, (await store.shared(s.id)).length, (await store.intents(s.id)).length, (await store.cards(s.id)).length], [0, 0, 0, 0]);
 });
