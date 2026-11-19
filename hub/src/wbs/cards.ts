@@ -97,7 +97,7 @@ export function workIndicators(rows: SharedWork[]) {
   const top = [...wd].sort((a, b) => b[1] - a[1])[0], open = f.length - done.length, med = median(lead);
   const ind = { rows: f.length, done: done.length, open, median_days: med, on_time: due.length ? { kept: onTime, of: due.length } : null,
     usual_finish_day: top && done.length >= 3 && top[1] / done.length >= 0.4 ? WEEKDAY[top[0]] : null };
-  const parts = [`공유 행 ${ind.rows} · 완료 ${ind.done} · 진행 ${open}`, med !== null ? `완료까지 중앙값 ${med}일` : '', ind.on_time ? `마감 지킴 ${onTime}/${due.length}` : '',
+  const parts = [`공유 행 ${ind.rows} · 완료 ${ind.done} · 열린 행 ${open}`, med !== null ? `완료까지 중앙값 ${med}일` : '', ind.on_time ? `마감 지킴 ${onTime}/${due.length}` : '',
     ind.usual_finish_day ? `주로 ${ind.usual_finish_day}요일에 마침` : ''].filter(Boolean);
   return { ...ind, line: parts.join(' · '), inferred: true as const, basis: '이 팀에 공유한 행만' };
 }

@@ -100,8 +100,8 @@ test('work indicators come only from the rows shared with that team, marked infe
   await cards.publish(A, id, { sections: ['direction'], direction: { role: '제품' } });
   const w = (await cards.list(A, id)).cards.find(c => c.uid === 'u_b')!.work;
   assert.deepEqual([w.rows, w.done, w.median_days, w.on_time, w.usual_finish_day, w.inferred], [3, 3, 4, { kept: 2, of: 3 }, '금', true]);
-  assert.match(w.line, /공유 행 3 · 완료 3 · 진행 0 · 완료까지 중앙값 4일 · 마감 지킴 2\/3 · 주로 금요일에 마침/);
-  assert.equal(workIndicators([] as SharedWork[]).line, '공유 행 0 · 완료 0 · 진행 0');
+  assert.match(w.line, /공유 행 3 · 완료 3 · 열린 행 0 · 완료까지 중앙값 4일 · 마감 지킴 2\/3 · 주로 금요일에 마침/);
+  assert.equal(workIndicators([] as SharedWork[]).line, '공유 행 0 · 완료 0 · 열린 행 0');
 });
 
 test('employee mode removes every card at once and is the owner\'s switch; leaving takes one\'s card off; reads are noted', async () => {
