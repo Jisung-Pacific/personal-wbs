@@ -5,8 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { FirestoreStore } from '../src/store/firestore.js';
 import { LocalKek } from '../src/crypto/envelope.js';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Ledger } from '../src/wbs/service.js';
+import { admit } from './support.js';
 
 const on = !!process.env.FIRESTORE_EMULATOR_HOST;
 
@@ -35,8 +36,8 @@ test('Firestore store: a team space keeps its ledger, key and members apart; del
   const a = 'u_a' + Date.now(), b = 'u_b' + Date.now();
   await ledger.add({ uid: a, clientName: 'Claude' }, { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: '개인 원장 행 기록 테스트', start: '2026-11-18', status: '완료' });
   const s = await spaces.create(person(a), '팀 공간 시험');
-  await spaces.setMember(person(a), s.id, b, 'member');
-  await spaces.setMember(person(a), s.id, 'u_g' + Date.now(), 'guest', ['2026:4.3']);
+  await admit(spaces, person(a), s.id, b, 'member');
+  await admit(spaces, person(a), s.id, 'u_g' + Date.now(), 'guest', ['2026:4.3']);
   await spaces.proposeCharter(person(a), s.id, ['팀 작업은 기본 공개다.']);
   assert.equal((await spaces.charter(person(a), s.id)).open, false, 'the member has not agreed yet');
   await spaces.consentCharter(person(b), s.id, 1, true);
@@ -60,7 +61,7 @@ test('Firestore store: the team plan, intents, cards, weekly briefs, links and s
   const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views);
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys)), a = 'u_a' + Date.now(), b = 'u_b' + Date.now();
   const s = await spaces.create(person(a), '계획 시험');
-  await spaces.setMember(person(a), s.id, b, 'member');
+  await admit(spaces, person(a), s.id, b, 'member');
   await spaces.proposeCharter(person(a), s.id, ['공유는 필드 단위다.']); await spaces.consentCharter(person(b), s.id, 1, true);
   await plans.put(person(a), s.id, { intents: [{ why: '저장소를 믿을 수 있게' }], items: [{ code: '1', year: '2026', scope: '팀 계획', intent: 'i1' }, { code: '1.1', year: '2026', scope: '저장소', status: '진행 중', due: '2026-11-30' }] });
   assert.deepEqual((await store.intents(s.id)).map(i => [i.id, i.why, i.status]), [['i1', '저장소를 믿을 수 있게', 'active']]);
@@ -102,4 +103,33 @@ test('Firestore store: the team plan, intents, cards, weekly briefs, links and s
   assert.ok((await store.shared(s.id))[0].frozen, 'the copy stays with the team, frozen');
   await spaces.remove(person(a), s.id);
   assert.deepEqual([(await store.plan(s.id)).length, (await store.shared(s.id)).length, (await store.intents(s.id)).length, (await store.cards(s.id)).length, (await store.weeklies(s.id)).length], [0, 0, 0, 0, 0]);
+});
+
+test('Firestore store: invitations — a link found by its hash and used once under contention, an account invitation in its list, lookups gone with the space', { skip: !on }, async () => {
+  const { Spaces } = await import('../src/wbs/spaces.js'), { person } = await import('../src/wbs/access.js');
+  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store);
+  const sha = (x: string) => createHash('sha256').update(x).digest('hex'), n = Date.now();
+  const a = `u_a${n}`, c = `u_c${n}`;
+  const s = await spaces.create(person(a), '초대 시험');
+  await spaces.proposeCharter(person(a), s.id, ['공유는 필드 단위다.']);
+  const link = await spaces.invite(person(a), s.id, { role: 'member' });
+  const acct = await spaces.invite(person(a), s.id, { role: 'guest', projects: ['2026:4.3'], for: c });
+  assert.deepEqual(await store.inviteByHash(sha(link.code!)), { space: s.id, id: link.id });
+  assert.deepEqual(await store.invitesFor(c), [{ space: s.id, id: acct.id }]);
+  assert.equal((await store.invite(s.id, link.id))!.hash, sha(link.code!));
+  // two people race one link: exactly one gets in, and the link is gone from the lookup
+  const tries = await Promise.allSettled([`u_b${n}`, `u_d${n}`].map(u => spaces.join(person(u), { code: link.code! }, 1)));
+  assert.equal(tries.filter(t => t.status === 'fulfilled').length, 1);
+  assert.equal((await store.members(s.id)).length, 2);
+  assert.equal(await store.inviteByHash(sha(link.code!)), null);
+  // the account invitation: joined in one step with the account's own list of spaces kept in step
+  await spaces.join(person(c), { space: s.id, invite: acct.id });
+  assert.deepEqual(await store.invitesFor(c), []);
+  assert.deepEqual([(await store.membership(s.id, c))!.projects, (await store.spacesOf(c)).map(x => x.id)], [['2026:4.3'], [s.id]]);
+  assert.deepEqual((await spaces.invites(person(a), s.id)).map(i => i.status).sort(), ['joined', 'joined']);
+  // open invitations' lookups go with the space
+  const l2 = await spaces.invite(person(a), s.id, { role: 'member' }), a2 = await spaces.invite(person(a), s.id, { role: 'member', for: `u_e${n}` });
+  await spaces.remove(person(a), s.id);
+  assert.equal(await store.inviteByHash(sha(l2.code!)), null);
+  assert.deepEqual(await store.invitesFor(a2.for!), []);
 });

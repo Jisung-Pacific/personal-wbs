@@ -17,17 +17,21 @@
 //   spaces/{id}/shared/{workId}        the shared fields of one member's linked row: {uid, frozen?, enc} — plan code and fields sealed
 //   users/{uid}/links/{year}_{code}    a personal row's link to a team plan item: {year, code, enc} — space, plan, fields sealed
 //   users/{uid}/views/{YYYY-MM-DD}     who read the person's shared rows that day: {date, expire, enc} — the entries sealed
-// year and code stay readable so queries can select a year or a task, and memberships (uid, role) so access can be
-// checked; everything else is ciphertext.
+//   spaces/{id}/invites/{iid}          an invitation (5.3): {status, at, expire, hash?, for?, enc} — role, projects, by, who sealed
+//   invites/{sha256(code)}             where an open link invitation is: {space, iid, expire}
+//   users/{uid}/invites/{id}_{iid}     an open invitation waiting for the account: {space, iid, expire}
+// year and code stay readable so queries can select a year or a task, memberships (uid, role) so access can be checked,
+// and an invitation's code hash and account so its look-ups can be removed without the space's key; everything else is
+// ciphertext.
 //   oauth_clients/{sha256(client_id)}  registered or metadata-document clients
 //   oauth_requests/{id}, oauth_codes/{hash}, oauth_refresh/{hash}   short-lived OAuth state; `expire` drives a TTL policy
 import { createHash } from 'node:crypto';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, type DocumentReference, type Firestore, type Query } from 'firebase-admin/firestore';
 import {
   isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type WeeklyBrief, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
   type Intent, type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
-  type ViewEntry, type Delegation, type Proposal, type WeeklyReport,
+  type ViewEntry, type Delegation, type Invite, type Proposal, type WeeklyReport,
 } from './types.js';
 import { matches, mergeViews } from './memory.js';
 import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from '../crypto/envelope.js';
@@ -400,12 +404,76 @@ export class FirestoreStore implements Store {
       entries: Object.values(await this.envelope.open<Record<string, ViewEntry>>(uid, `views/${d.id}`, d.get('enc') as Sealed)) })));
   }
 
-  /** Shred first (the team ledger becomes unreadable at once), then drop the members' entries and the documents. */
+  /** Shred first (the team ledger becomes unreadable at once), then drop the members' entries, the open invitations'
+   *  look-ups and the documents. */
   async deleteSpace(id: string) {
-    const ms = await this.members(id);
+    const [ms, open] = await Promise.all([this.members(id), this.inviteCol(id).where('status', '==', 'open').get()]);
     await this.envelope.shred(spaceOwner(id));
-    const b = this.db.batch(); ms.forEach(m => b.delete(this.indexDoc(m.uid, id))); await b.commit();
+    const b = this.db.batch(); ms.forEach(m => b.delete(this.indexDoc(m.uid, id)));
+    open.docs.forEach(d => this.dropInviteLookups(b, id, d.id, d.get('hash'), d.get('for')));
+    await b.commit();
     await this.db.recursiveDelete(this.spaceDoc(id));
+  }
+
+  // ---------------------------------------------------------------- invitations (5.3)
+  private inviteCol(id: string) { return this.spaceDoc(id).collection('invites'); }
+  private hashDoc(hash: string) { if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error('malformed invitation hash'); return this.db.collection('invites').doc(hash); }
+  private userInviteDoc(uid: string, id: string, iid: string) { return home(this.db, uid).collection('invites').doc(`${this.spaceDoc(id).id}_${iid}`); }
+  private dropInviteLookups(t: { delete(ref: DocumentReference): unknown }, id: string, iid: string, hash?: unknown, uid?: unknown) {
+    if (typeof hash === 'string' && hash) t.delete(this.hashDoc(hash));
+    if (typeof uid === 'string' && uid) t.delete(this.userInviteDoc(uid, id, iid));
+  }
+  /** The stored document: what look-ups and the TTL need stays plain; an open invitation lapses at `expires`, a closed
+   *  one is kept 30 days as the owner's record. */
+  private async sealInvite(inv: Invite) {
+    const { id, space, hash, for: forUid, status, at, ...body } = inv;   // body: role, projects, by, expires, who, closed
+    const keep = status === 'open' ? inv.expires : (inv.closed ?? Date.now()) + 30 * 864e5;
+    return { status, at, expire: expire(keep), ...(hash ? { hash } : {}), ...(forUid ? { for: forUid } : {}),
+      enc: await this.envelope.seal(spaceOwner(space), `invites/${id}`, body) };
+  }
+  private async openInvite(id: string, iid: string, d: Record<string, unknown>): Promise<Invite> {
+    const body = await this.envelope.open<Omit<Invite, 'id' | 'space' | 'hash' | 'for' | 'status' | 'at'>>(spaceOwner(id), `invites/${iid}`, d.enc as Sealed);
+    return { id: iid, space: id, status: d.status as Invite['status'], at: d.at as number, ...(d.hash ? { hash: d.hash as string } : {}), ...(d.for ? { for: d.for as string } : {}), ...body };
+  }
+  async invites(id: string) {
+    const s = await this.inviteCol(id).get();
+    return (await Promise.all(s.docs.map(d => this.openInvite(id, d.id, d.data())))).sort((a, b) => b.at - a.at);
+  }
+  async invite(id: string, iid: string) {
+    const d = await this.inviteCol(id).doc(iid).get();
+    return d.exists ? this.openInvite(id, iid, d.data()!) : null;
+  }
+  async inviteByHash(hash: string) {
+    const d = await this.hashDoc(hash).get();
+    return d.exists ? { space: d.get('space') as string, id: d.get('iid') as string } : null;
+  }
+  async invitesFor(uid: string) {
+    const s = await home(this.db, uid).collection('invites').get();
+    return s.docs.map(d => ({ space: d.get('space') as string, id: d.get('iid') as string }));
+  }
+  async putInvite(inv: Invite) {
+    const doc = await this.sealInvite(inv), b = this.db.batch(), keep = expire(inv.expires);
+    b.create(this.inviteCol(inv.space).doc(inv.id), doc);
+    if (inv.hash) b.create(this.hashDoc(inv.hash), { space: inv.space, iid: inv.id, expire: keep });
+    if (inv.for) b.set(this.userInviteDoc(inv.for, inv.space, inv.id), { space: inv.space, iid: inv.id, expire: keep });
+    await b.commit();
+  }
+  async inviteTx<T>(id: string, iid: string, fn: (inv: Invite | null, members: Membership[]) => Promise<{ put?: Invite; member?: Membership; out: T }>): Promise<T> {
+    await this.envelope.dek(spaceOwner(id));   // KMS outside the retryable transaction; sealing inside is local
+    const ref = this.inviteCol(id).doc(iid);
+    return this.db.runTransaction(async t => {
+      const [d, ms] = await Promise.all([t.get(ref), t.get(this.spaceDoc(id).collection('members'))]);   // every read before any write
+      const { put, member, out } = await fn(d.exists ? await this.openInvite(id, iid, d.data()!) : null, ms.docs.map(x => memberOf(x.id, x.data())));
+      if (member) {
+        t.set(this.memberDoc(id, member.uid), { role: member.role, since: member.since, by: member.by, ...(member.projects ? { projects: member.projects } : {}) });
+        t.set(this.indexDoc(member.uid, id), { role: member.role, since: member.since });
+      }
+      if (put) {
+        t.set(ref, await this.sealInvite(put));
+        if (put.status !== 'open') this.dropInviteLookups(t, id, put.id, put.hash, put.for);
+      }
+      return out;
+    });
   }
 
   async putClient(c: OAuthClient) { await this.db.collection('oauth_clients').doc(sha(c.client_id)).set(c); }

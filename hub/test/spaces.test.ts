@@ -10,6 +10,7 @@ import { Ledger, LedgerError } from '../src/wbs/service.js';
 import { MAX_PEOPLE, PERSONAL, Spaces } from '../src/wbs/spaces.js';
 import { agent, person, type Caller } from '../src/wbs/access.js';
 import { Envelope, LocalKek, MemoryDekStore } from '../src/crypto/envelope.js';
+import { admit } from './support.js';
 
 /** The LedgerError code a call fails with, or "ok". */
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
@@ -30,8 +31,8 @@ test('team space: members write, a guest reads only its projects, outsiders see 
 
   const s = await spaces.create(A, '  연구실   시범 ');
   assert.match(s.id, /^s_[A-Za-z0-9_-]{22}$/); assert.equal(s.name, '연구실 시범');
-  await spaces.setMember(A, s.id, 'u_b', 'member');
-  await spaces.setMember(A, s.id, 'u_g', 'guest', ['2026:4.3']);
+  await admit(spaces, A, s.id, 'u_b', 'member');
+  await admit(spaces, A, s.id, 'u_g', 'guest', ['2026:4.3']);
   await open(spaces, A, s.id, B);
 
   // a member's agent writes the team plan in two projects
@@ -71,9 +72,9 @@ test('agents work inside spaces but never govern them; scopes narrow what they d
   const store = new MemoryStore(), spaces = new Spaces(store);
   assert.equal(await outcome(spaces.create(bot('u_a'), '에이전트가 만든 팀')), 'forbidden');
   const s = await spaces.create(A, '내 팀');
-  await spaces.setMember(A, s.id, 'u_b', 'member');
+  await admit(spaces, A, s.id, 'u_b', 'member');
   await open(spaces, A, s.id, B);
-  for (const p of [spaces.setMember(bot('u_a'), s.id, 'u_c', 'member'), spaces.transfer(bot('u_a'), s.id, 'u_b'),
+  for (const p of [spaces.setMember(bot('u_a'), s.id, 'u_b', 'guest', []), spaces.invite(bot('u_a'), s.id, { role: 'member', for: 'u_c' }), spaces.transfer(bot('u_a'), s.id, 'u_b'),
     spaces.remove(bot('u_a'), s.id), spaces.removeMember(bot('u_b'), s.id, 'u_b')]) assert.equal(await outcome(p), 'forbidden');
   assert.equal(await outcome(spaces.view(bot('u_b', ['wbs.read']), s.id, 'write')), 'forbidden');
   assert.equal(await outcome(spaces.view(bot('u_b', ['wbs.read']), s.id, 'read')), 'ok');
@@ -95,27 +96,34 @@ test('agents work inside spaces but never govern them; scopes narrow what they d
 test('team space: only the owner manages; guests get projects; the owner leaves only after handing over; at most 10 people', async () => {
   const store = new MemoryStore(), spaces = new Spaces(store);
   const s = await spaces.create(A, '내 팀');
-  await spaces.setMember(A, s.id, 'u_b', 'member');
-  assert.equal(await outcome(spaces.setMember(B, s.id, 'u_c', 'member')), 'forbidden');
+  await admit(spaces, A, s.id, 'u_b', 'member');
+  assert.equal(await outcome(spaces.invite(B, s.id, { role: 'member', for: 'u_c' })), 'forbidden');
+  assert.equal(await outcome(spaces.setMember(B, s.id, 'u_b', 'guest', [])), 'forbidden');
+  assert.equal(await outcome(spaces.setMember(A, s.id, 'u_c', 'member')), 'invalid', 'nobody is added: people join by an invitation');
   assert.equal(await outcome(spaces.setMember(A, s.id, 'u_a', 'member')), 'invalid');
   assert.equal(await outcome(spaces.setMember(A, s.id, 'u/evil', 'member')), 'invalid');
-  assert.equal(await outcome(spaces.setMember(A, s.id, 'u_g', 'guest', ['4.3'])), 'invalid', 'a project is "YYYY:<code>"');
+  assert.equal(await outcome(spaces.invite(A, s.id, { role: 'guest', projects: ['4.3'], for: 'u_g' })), 'invalid', 'a project is "YYYY:<code>"');
   assert.equal(await outcome(spaces.setMember(A, s.id, 'u_b', 'member', ['2026:4.3'])), 'invalid', 'members see every project');
   assert.equal(await outcome(spaces.removeMember(A, s.id, 'u_a')), 'invalid');
   assert.equal(await outcome(spaces.removeMember(B, s.id, 'u_a')), 'forbidden');
   assert.equal(await outcome(spaces.transfer(A, s.id, 'u_nobody')), 'invalid');
 
   // a guest's projects are kept across a call that leaves them out, and dropped when it becomes a member
-  await spaces.setMember(A, s.id, 'u_g', 'guest', ['2026:4.3', '2026:4.3', '2025:1.2']);
+  await admit(spaces, A, s.id, 'u_g', 'guest', ['2026:4.3', '2026:4.3', '2025:1.2']);
   assert.deepEqual((await store.membership(s.id, 'u_g'))!.projects, ['2025:1.2', '2026:4.3']);
   await spaces.setMember(A, s.id, 'u_g', 'guest');
   assert.deepEqual((await store.membership(s.id, 'u_g'))!.projects, ['2025:1.2', '2026:4.3']);
   await spaces.setMember(A, s.id, 'u_g', 'member');
   assert.equal((await store.membership(s.id, 'u_g'))!.projects, undefined);
 
-  for (let i = 4; i <= MAX_PEOPLE; i++) await spaces.setMember(A, s.id, `u_${i}`, 'guest', []);
+  // at most 10 people, and an open invitation holds a seat until it is used, revoked or lapses
+  for (let i = 4; i < MAX_PEOPLE; i++) await admit(spaces, A, s.id, `u_${i}`, 'guest', []);
+  const link = await spaces.invite(A, s.id, { role: 'member' });
+  assert.equal(await outcome(spaces.invite(A, s.id, { role: 'member', for: 'u_11' })), 'invalid', 'nine people and an open link fill the space');
+  await spaces.revoke(A, s.id, link.id);
+  await admit(spaces, A, s.id, `u_${MAX_PEOPLE}`, 'guest', []);
   assert.equal((await store.members(s.id)).length, MAX_PEOPLE);
-  assert.equal(await outcome(spaces.setMember(A, s.id, 'u_11', 'member')), 'invalid');
+  assert.equal(await outcome(spaces.invite(A, s.id, { role: 'member', for: 'u_11' })), 'invalid');
   assert.equal(await outcome(spaces.setMember(A, s.id, 'u_4', 'member')), 'ok', 'a role change is not a new person');
 
   // a member leaves on their own and loses access at once
@@ -134,7 +142,7 @@ test('team space: only the owner manages; guests get projects; the owner leaves 
 test('deleting a space removes its ledger and memberships; deleting an account ends memberships under the ownership rule', async () => {
   const store = new MemoryStore(), ledger = new Ledger(store), spaces = new Spaces(store);
   const t = await spaces.create(A, '팀'), solo = await spaces.create(A, '혼자 쓰는 공간');
-  await spaces.setMember(A, t.id, 'u_b', 'member');
+  await admit(spaces, A, t.id, 'u_b', 'member');
   await open(spaces, A, t.id, B);
   await ledger.add(claude('u_a'), task('팀 원장 행: 삭제될 데이터'), (await spaces.view(A, t.id, 'write')).owner);
   await ledger.add(claude('u_b'), task('개인 원장 행: 남아야 하는 데이터'));

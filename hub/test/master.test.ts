@@ -22,6 +22,7 @@ import { Briefs, lastFullWeek, isoWeek } from '../src/wbs/weekly.js';
 import { MasterAgent } from '../src/wbs/master.js';
 import { agent, person, type Caller } from '../src/wbs/access.js';
 import { todayKst } from '../src/wbs/model.js';
+import { admit } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const O = person('u_o'), M = person('u_m'), G = person('u_g');
@@ -31,8 +32,8 @@ async function team() {
   const store = new MemoryStore(), spaces = new Spaces(store), plans = new Plans(store, spaces);
   const master = new MasterAgent(store, spaces, plans), briefs = new Briefs(store, spaces);
   const id = (await spaces.create(O, '시범 팀')).id;
-  await spaces.setMember(O, id, 'u_m', 'member');
-  await spaces.setMember(O, id, 'u_g', 'guest', [`${Y}:1.1`]);
+  await admit(spaces, O, id, 'u_m', 'member');
+  await admit(spaces, O, id, 'u_g', 'guest', [`${Y}:1.1`]);
   await spaces.proposeCharter(O, id, ['에이전트는 제안하고 사람은 승인한다.'], '');
   await spaces.consentCharter(M, id, 1, true);
   for (const [u, n] of [['u_o', '오너'], ['u_m', '멤버엠']]) await store.putSecret(u, 'profile', { name: n });
@@ -150,7 +151,8 @@ test('delegation end to end: owner-only consent, the agent\'s own tools, nothing
   try {
     const co = await sign('u_o'), cm = await sign('u_m'), o = call(co), m = call(cm);
     const s = await o('POST', '/app/api/spaces', { name: '시범 팀' });
-    await o('POST', `/app/api/t/${s.id}/members`, { uid: 'u_m', role: 'member' });
+    const inv = await o('POST', `/app/api/t/${s.id}/invites`, { role: 'member', for: 'u_m' });
+    await m('POST', '/app/api/join', { space: s.id, invite: inv.id });
     await o('POST', `/app/api/t/${s.id}/charter/propose`, { lines: ['에이전트는 제안하고 사람은 승인한다.'], note: '' });
     await m('POST', `/app/api/t/${s.id}/charter/consent`, { version: 1, agree: true });
     const plans = new Plans(store, new Spaces(store));

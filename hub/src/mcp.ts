@@ -10,7 +10,7 @@ import type { Spaces } from './wbs/spaces.js';
 import type { Store } from './store/types.js';
 import { IntentInput, PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
 import { ViewsInput, type Views } from './wbs/views.js';
-import { teamOverview } from './wbs/team.js';
+import { switchList, teamOverview } from './wbs/team.js';
 import type { Briefs } from './wbs/weekly.js';
 import { ProposeInput, ReportInput, type MasterAgent } from './wbs/master.js';
 
@@ -24,7 +24,8 @@ export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every ye
 - Record work silently in the background when the user finishes something concrete; mention it only if they ask.
 - The inbox holds raw material captured where no agent could write (chats on other AI sites, searches, notes). When asked to process it, read wbs_inbox_list, turn what is concrete work into rows with the rules above, and mark every item merged (with the codes) or skipped.
 - A team space has a plan (its project WBS): read it against the actual work with wbs_plan, write it with wbs_plan_put. Record a person's own work in their personal ledger and link it to a plan item with wbs_share; only the fields they choose reach the team, and wbs_views shows the person who read them.
-- Every tool works on the user's personal ledger unless you pass space: a team space id from wbs_spaces, for the team's plan and work. Write personal work to the personal ledger and team plan items to the team space. A guest sees only its assigned projects; people, not agents, manage a space's members. A team space opens to a member once they have agreed to its charter (wbs_charter); agreeing and proposing changes are for the user to do, so tell them when a proposal waits for their answer.`;
+- Every tool works on the user's personal ledger unless you pass space: a team space id from wbs_spaces, for the team's plan and work. Write personal work to the personal ledger and team plan items to the team space. A guest sees only its assigned projects; people, not agents, manage a space's members. A team space opens to a member once they have agreed to its charter (wbs_charter); agreeing and proposing changes are for the user to do, so tell them when a proposal waits for their answer.
+- One account can be in several teams. wbs_spaces says per team what waits for the user (charter answers, proposals to decide, reports to approve) and lists invitations to other teams (kind invite). People join a team only by accepting an invitation themselves on the hub (accept_url); tell the user, never answer it for them.`;
 
 /** What changes when the connection is a team's own address (execution WBS 3.8): the team is the default, and the
  *  person's work still lands in their own ledger, linked to the team's plan. */
@@ -83,11 +84,11 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
 
     server.registerTool('wbs_spaces', {
       title: 'List the spaces',
-      description: 'The personal space and every team space the user belongs to, with the user\'s role (owner, member, guest; a guest also gets its projects). Pass a team space id as `space` to the other tools to work in that team\'s plan. Each team carries connector_url, its own MCP address: added as a connector (for example once by a team\'s Claude organisation), it opens that team\'s environment, where work is recorded for the team automatically. this_connection marks the space this connection works in.',
+      description: 'The personal space and every team space the user belongs to, with the user\'s role (owner, member, guest; a guest also gets its projects). Pass a team space id as `space` to the other tools to work in that team\'s plan. For a team the user owns or is a member of, waiting counts what is theirs to do there: charter (agree to the version in force or answer a proposal), decide (plan proposals), drafts (weekly reports to approve), total. Each team carries connector_url, its own MCP address: added as a connector (for example once by a team\'s Claude organisation), it opens that team\'s environment, where work is recorded for the team automatically. this_connection marks the space this connection works in. Entries of kind invite are invitations to other teams waiting for the user (space, invite, name, role, expires): not spaces yet; the user accepts or declines them on the hub at accept_url.',
       inputSchema: {}, annotations: ro,
-    }, async () => run(async () => (await spaces.list(caller)).map(x => ({ ...x,
+    }, async () => run(async () => (await switchList(spaces, caller, opts.master, opts.hubUrl)).map(x => x.kind === 'invite' ? x : ({ ...x,
       ...(x.kind === 'team' && opts.hubUrl && x.role !== 'guest' ? { connector_url: `${opts.hubUrl}/mcp/t/${x.id}` } : {}),
-      ...((env ? x.id === env : x.kind !== 'team') ? { this_connection: true } : {}) }))));
+      ...((env ? x.id === env : x.kind === 'personal') ? { this_connection: true } : {}) }))));
 
     server.registerTool('wbs_charter', {
       title: 'Read a team space\'s charter',

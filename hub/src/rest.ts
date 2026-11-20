@@ -11,7 +11,7 @@ import type { Views } from './wbs/views.js';
 import { SHARE_FIELDS, type Store } from './store/types.js';
 import type { Briefs } from './wbs/weekly.js';
 import type { MasterAgent } from './wbs/master.js';
-import { teamOverview } from './wbs/team.js';
+import { switchList, teamOverview } from './wbs/team.js';
 import type { Config } from './config.js';
 
 export type Authed = Request & { actor?: Actor; scopes?: string[] };
@@ -26,13 +26,13 @@ function send(res: Response, f: () => Promise<unknown>) {
 const need = (scope: string) => (req: Authed, res: Response, next: () => void) =>
   req.scopes?.includes(scope) ? next() : res.status(403).set('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${scope}"`).json({ error: 'insufficient_scope', scope });
 
-export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?: Plans, views?: Views, store?: Store, briefs?: Briefs, master?: MasterAgent): Router {
+export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?: Plans, views?: Views, store?: Store, briefs?: Briefs, master?: MasterAgent, hubUrl?: string): Router {
   const r = Router(); r.use(express.json({ limit: '256kb' }));
   const list = (v: unknown) => typeof v === 'string' && v ? v.split(',') : undefined;
   // the token's agent acts for its person; `?space=<id>` picks a team space (the permission table decides), default personal
   const at = (req: Authed, need: 'read' | 'write') =>
     spaces.view(agent(req.actor!.uid, req.actor!.clientName, req.scopes || []), typeof req.query.space === 'string' ? req.query.space : undefined, need);
-  r.get('/spaces', need('wbs.read'), (req: Authed, res) => send(res, () => spaces.list(agent(req.actor!.uid, req.actor!.clientName, req.scopes || []))));
+  r.get('/spaces', need('wbs.read'), (req: Authed, res) => send(res, () => switchList(spaces, agent(req.actor!.uid, req.actor!.clientName, req.scopes || []), master, hubUrl)));
   r.get('/charter', need('wbs.read'), (req: Authed, res) => send(res, () => spaces.charter(agent(req.actor!.uid, req.actor!.clientName, req.scopes || []), String(req.query.space || ''))));
   r.get('/rows', need('wbs.read'), (req: Authed, res) => send(res, async () => ledger.search(await at(req, 'read'), {
     year: req.query.year as string | undefined, status: list(req.query.status) as never, package: req.query.package as string | undefined,
@@ -122,7 +122,7 @@ export function openapi(cfg: Config, version: string) {
       '/views': { get: { operationId: 'listViews', summary: 'Who viewed your shared rows: person or agent, team space, how many rows, when and how often (yours only; kept 180 days)',
         parameters: [{ name: 'days', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 180 } }, { name: 'space', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'View log' } } } },
       '/share/{year}/{code}': { delete: { operationId: 'unshareRow', summary: 'Withdraw a row of yours from the team plan it serves', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }, { name: 'code', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'Unlinked' } } } },
-      '/spaces': { get: { operationId: 'listSpaces', summary: 'The personal space and the team spaces the user belongs to, with the user\'s role; pass a team id as `space` to other calls', responses: { 200: { description: 'Spaces' } } } },
+      '/spaces': { get: { operationId: 'listSpaces', summary: 'The personal space and the team spaces the user belongs to, with the user\'s role and what waits for them in each team (waiting); pass a team id as `space` to other calls. Entries of kind invite are invitations the user answers on the hub (accept_url)', responses: { 200: { description: 'Spaces' } } } },
       '/brief': { get: { operationId: 'brief', summary: 'Compact picture for planning and advice: status, flow, focus, open and due work, waiting items, work style, signals; in a team space also the intents against the work (alignment)', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Brief' } } } },
       '/summary': { get: { operationId: 'summary', summary: 'Counts, open tasks, latest changes', parameters: [{ name: 'year', in: 'query', required: false, schema: { type: 'string' } }, space], responses: { 200: { description: 'Summary' } } } },
       '/inbox': {

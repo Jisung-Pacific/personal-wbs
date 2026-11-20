@@ -10,6 +10,7 @@ import { Plans } from '../src/wbs/plan.js';
 import { Views } from '../src/wbs/views.js';
 import { agent, person, type Caller } from '../src/wbs/access.js';
 import { todayKst } from '../src/wbs/model.js';
+import { admit } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const A = person('u_a'), B = person('u_b'), G = person('u_g');
@@ -19,7 +20,7 @@ async function team() {
   const store = new MemoryStore(), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views);
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));
   const s = await spaces.create(A, '시범 팀');
-  await spaces.setMember(A, s.id, 'u_b', 'member'); await spaces.setMember(A, s.id, 'u_g', 'guest', [`${Y}:1.1`]);
+  await admit(spaces, A, s.id, 'u_b', 'member'); await admit(spaces, A, s.id, 'u_g', 'guest', [`${Y}:1.1`]);
   await spaces.proposeCharter(A, s.id, ['열람은 본인에게 보인다.']); await spaces.consentCharter(B, s.id, 1, true);
   await plans.put(A, s.id, { items: [{ code: '1', year: Y, scope: '팀 계획', status: '진행 중' }, { code: '1.1', year: Y, scope: '저장소', status: '진행 중' }] });
   const add = async (who: string, task: string) => (await ledger.add({ uid: who, clientName: 'Claude' }, { package: '5.3 소프트웨어', area: '5 대외·경력', task, start: `${Y}-01-06`, status: '진행 중' })).created;

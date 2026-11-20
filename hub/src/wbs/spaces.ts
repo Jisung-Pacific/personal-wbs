@@ -1,8 +1,12 @@
 // Spaces: whose ledger a call works on, and who may do what there. Every account has its personal space (the account
-// itself, nothing to create); a team space is made by one person, its owner, who adds members (equal, read and write)
+// itself, nothing to create); a team space is made by one person, its owner, who invites members (equal, read and write)
 // and guests (read only, and only the projects they are assigned). A small AI-native team is the target: usually 2–5
 // people, at most 10 per space. A team space's ledger lives under spaces/<id> with its own data key, so its rows, history
 // and name are sealed apart from every member's personal ledger, and deleting the space shreds that key.
+//
+// One account, many teams (execution WBS 5.3): a person joins a team only by accepting an invitation, by their own hand
+// — a one-time link the owner hands to them, or an invitation addressed to their account — so nobody is put in a team
+// without saying yes, and the same account moves between its personal space and every team it has joined.
 //
 // Every decision goes through the permission table (access.ts): the stored membership is the relation tuple, the table
 // says what it grants, and agents act within the person's relation and scopes but never govern a space.
@@ -11,8 +15,8 @@
 // member's agreement, and each owner or member enters only after agreeing to the version in force (a newcomer agrees on
 // joining). A change is a new version: it takes effect when everyone agrees, the version it replaces is kept as
 // superseded, and withdrawn proposals stay too, so the versions with their dated consents are the change record.
-import { randomBytes } from 'node:crypto';
-import { spaceOwner, type CharterVersion, type Membership, type Store } from '../store/types.js';
+import { createHash, randomBytes } from 'node:crypto';
+import { spaceOwner, type CharterVersion, type Invite, type Membership, type Store } from '../store/types.js';
 import { LedgerError, type View } from './service.js';
 import { callerUid, decide, type Action, type Caller, type Relation } from './access.js';
 
@@ -21,6 +25,12 @@ export const MAX_PEOPLE = 10;
 const SPACE_ID = /^s_[A-Za-z0-9_-]{22}$/;
 const PROJECT = /^\d{4}:\d+\.\d+$/;   // a package of one year, e.g. "2026:4.3"
 export const CHARTER_LINES = 9;
+export const INVITE_DAYS = 7;
+const INVITE_ID = /^i_[A-Za-z0-9_-]{16}$/;
+const CODE = /^[A-Za-z0-9_-]{43}$/;   // a link invitation's code: 32 random bytes, base64url; only its SHA-256 is stored
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+/** How a person names an invitation: the code of a link invitation, or a space and an invitation addressed to them. */
+export type InviteRef = { code: string } | { space: string; invite: string };
 
 /** An account id as the hub receives it from sign-in; "/" would let it pass for a ledger path, so it is refused. */
 export function assertUid(uid: unknown): string {
@@ -117,20 +127,144 @@ export class Spaces {
     return (await this.store.members(id)).sort((a, b) => order[a.role] - order[b.role] || a.since - b.since);
   }
 
-  /** The owner adds a member or a guest, changes a role, or sets a guest's projects. Becoming owner is a transfer. */
+  /** The owner changes someone's role (member or guest) or a guest's projects. People join only by accepting an
+   *  invitation (invite, join); becoming owner is a hand-over (transfer). */
   async setMember(caller: Caller, id: string, who: string, role: 'member' | 'guest', projects?: string[]) {
     await this.need(caller, id, 'members.manage');
     assertUid(who);
     if (role !== 'member' && role !== 'guest') throw new LedgerError('invalid', 'role is member or guest');
-    const all = await this.store.members(id), cur = all.find(m => m.uid === who);
-    if (cur?.role === 'owner') throw new LedgerError('invalid', 'The owner\'s role changes only by a hand-over');
-    if (!cur && all.length >= MAX_PEOPLE) throw new LedgerError('invalid', `A team space holds at most ${MAX_PEOPLE} people`);
-    const p = role === 'guest' ? cleanProjects(projects ?? cur?.projects) : undefined;
+    const cur = await this.store.membership(id, who);
+    if (!cur) throw new LedgerError('invalid', 'Not in this space: people join by accepting an invitation');
+    if (cur.role === 'owner') throw new LedgerError('invalid', 'The owner\'s role changes only by a hand-over');
+    const p = role === 'guest' ? cleanProjects(projects ?? cur.projects) : undefined;
     if (role === 'member' && projects !== undefined) throw new LedgerError('invalid', 'Members see every project; projects are for guests');
-    await this.store.putMember(id, { uid: who, role, since: cur?.since ?? Date.now(), by: callerUid(caller)!, ...(p ? { projects: p } : {}) });
-    if (role === 'guest' && cur && cur.role !== 'guest') await this.left?.(id, who);   // a guest shares nothing with the team
+    await this.store.putMember(id, { uid: who, role, since: cur.since, by: callerUid(caller)!, ...(p ? { projects: p } : {}) });
+    if (role === 'guest' && cur.role !== 'guest') await this.left?.(id, who);   // a guest shares nothing with the team
     await this.settle(id);   // a member who becomes a guest no longer holds up a proposal
     return { uid: who, role, ...(p ? { projects: p } : {}) };
+  }
+
+  // ---------------------------------------------------------------- invitations (execution WBS 5.3)
+  /** The owner invites one person as a member or a guest (with its projects): by a link, whose one-time code is
+   *  returned only here, or by naming the person's account, where it waits in their list. Nobody joins until they
+   *  accept. Open invitations hold seats: members and open invitations together stay within MAX_PEOPLE. */
+  async invite(caller: Caller, id: string, o: { role: 'member' | 'guest'; projects?: string[]; for?: string }) {
+    await this.need(caller, id, 'members.manage');
+    if (o.role !== 'member' && o.role !== 'guest') throw new LedgerError('invalid', 'role is member or guest');
+    if (o.role === 'member' && o.projects?.length) throw new LedgerError('invalid', 'Members see every project; projects are for guests');
+    const projects = o.role === 'guest' ? cleanProjects(o.projects) : undefined, who = o.for === undefined ? undefined : assertUid(o.for);
+    const now = Date.now(), [ms, all] = await Promise.all([this.store.members(id), this.store.invites(id)]);
+    const open = all.filter(i => i.status === 'open' && i.expires > now);
+    if (who && ms.some(m => m.uid === who)) throw new LedgerError('invalid', 'Already in this space');
+    if (who && open.some(i => i.for === who)) throw new LedgerError('duplicate', 'An invitation for this account is already open');
+    if (ms.length + open.length >= MAX_PEOPLE) throw new LedgerError('invalid', `A team space holds at most ${MAX_PEOPLE} people, open invitations included`);
+    const code = who ? undefined : randomBytes(32).toString('base64url');
+    const inv: Invite = { id: 'i_' + randomBytes(12).toString('base64url'), space: id, role: o.role, ...(projects ? { projects } : {}),
+      ...(code ? { hash: sha256(code) } : { for: who }), by: callerUid(caller)!, at: now, expires: now + INVITE_DAYS * 864e5, status: 'open' };
+    await this.store.putInvite(inv);
+    return { ...this.shown(inv, now), ...(code ? { code } : {}) };
+  }
+
+  /** The owner's record of the space's invitations, newest first: open, expired, joined, declined or revoked. */
+  async invites(caller: Caller, id: string) {
+    await this.need(caller, id, 'members.manage');
+    const now = Date.now();
+    return (await this.store.invites(id)).map(i => this.shown(i, now));
+  }
+
+  /** The owner takes back an open invitation; it stays in the record as revoked. */
+  async revoke(caller: Caller, id: string, iid: string) {
+    await this.need(caller, id, 'members.manage');
+    if (typeof iid !== 'string' || !INVITE_ID.test(iid)) throw new LedgerError('not_found', 'No open invitation with this id');
+    return this.store.inviteTx(id, iid, async inv => {
+      if (!inv || inv.status !== 'open') throw new LedgerError('not_found', 'No open invitation with this id');
+      return { put: { ...inv, status: 'revoked', closed: Date.now() }, out: { revoked: inv.id } };
+    });
+  }
+
+  /** What a person reads before answering: the team, the role offered (a guest's projects), who invited and until when,
+   *  whether they are in the team already, and for a member the charter in force they agree to on joining (or the open
+   *  proposal they will be asked to answer). */
+  async preview(caller: Caller, ref: InviteRef) {
+    const { inv, uid } = await this.resolve(caller, ref);
+    const [s, me, vs] = await Promise.all([this.store.space(inv.space), this.store.membership(inv.space, uid), this.store.charters(inv.space)]);
+    if (!s) throw this.gone();
+    const active = vs.find(c => c.status === 'active'), open = vs.find(c => c.status === 'proposed'), member = inv.role === 'member';
+    return { space: { id: s.id, name: s.name }, invite: inv.id, role: inv.role, ...(inv.projects ? { projects: inv.projects } : {}),
+      by: inv.by, expires: inv.expires, already: me?.role ?? null,
+      charter: member && active ? { version: active.version, lines: active.lines } : null,
+      proposal: member && open ? { version: open.version, lines: open.lines } : null };
+  }
+
+  /** A person accepts and joins, by their own hand. A member agrees to the charter in force on joining (`agree`: the
+   *  version they read; without it the answer is consent_required with that version); a guest has none to agree to.
+   *  One use: the invitation closes as joined in the same step that adds the person, and a full team refuses. */
+  async join(caller: Caller, ref: InviteRef, agree?: number) {
+    const { inv, uid } = await this.resolve(caller, ref);
+    if (await this.store.membership(inv.space, uid)) throw new LedgerError('invalid', 'You are already in this space');
+    const active = inv.role === 'member' ? (await this.store.charters(inv.space)).find(c => c.status === 'active') : undefined;
+    if (active && agree !== active.version) throw new LedgerError('consent_required', `Agree to the team charter (version ${active.version}) to join`, { version: active.version });
+    const now = Date.now();
+    await this.store.inviteTx(inv.space, inv.id, async (cur, ms) => {
+      if (!cur || cur.status !== 'open' || cur.expires <= now) throw this.gone();
+      if (ms.some(m => m.uid === uid)) throw new LedgerError('invalid', 'You are already in this space');
+      if (ms.length >= MAX_PEOPLE) throw new LedgerError('invalid', `This team space is full (${MAX_PEOPLE} people)`);
+      return { put: { ...cur, status: 'joined', who: uid, closed: now },
+        member: { uid, role: cur.role, since: now, by: cur.by, ...(cur.role === 'guest' ? { projects: cur.projects ?? [] } : {}) }, out: null };
+    });
+    if (active) await this.store.charterTx(inv.space, async vs => {   // the version they read, if it is still the one in force
+      const c = vs.find(v => v.status === 'active' && v.version === agree);
+      return { put: c ? [{ ...c, consents: { ...c.consents, [uid]: { agree: true, at: now } } }] : [], out: null };
+    });
+    const s = await this.store.space(inv.space);
+    return { space: inv.space, name: s?.name ?? '', role: inv.role };
+  }
+
+  /** A person says no; the invitation closes as declined (a link cannot be used after that). */
+  async decline(caller: Caller, ref: InviteRef) {
+    const { inv, uid } = await this.resolve(caller, ref);
+    return this.store.inviteTx(inv.space, inv.id, async cur => {
+      if (!cur || cur.status !== 'open') throw this.gone();
+      return { put: { ...cur, status: 'declined', who: uid, closed: Date.now() }, out: { declined: cur.id } };
+    });
+  }
+
+  /** The account invitations waiting for the caller, soonest to lapse first, with each team's name: for the person, or
+   *  an agent reading for them (it may tell them; only the person answers). A team's agent has none. */
+  async received(caller: Caller) {
+    if (caller.kind === 'team_agent') return [];
+    if (caller.kind === 'agent' && !caller.scopes.includes('wbs.read')) throw new LedgerError('forbidden', 'Reading invitations needs the wbs.read scope');
+    const uid = assertUid(caller.uid), now = Date.now();
+    const found = await Promise.all((await this.store.invitesFor(uid)).map(async r => {
+      const [inv, s] = await Promise.all([this.store.invite(r.space, r.id), this.store.space(r.space)]);
+      return inv && s && inv.status === 'open' && inv.expires > now && inv.for === uid
+        ? { space: s.id, invite: inv.id, name: s.name, role: inv.role, ...(inv.projects ? { projects: inv.projects } : {}), by: inv.by, expires: inv.expires } : null;
+    }));
+    return found.filter(x => x !== null).sort((a, b) => a.expires - b.expires);
+  }
+
+  /** An invitation as its owner sees it; an open one past its date reads as expired. */
+  private shown(i: Invite, now: number) {
+    return { id: i.id, kind: i.for ? 'account' as const : 'link' as const, role: i.role, ...(i.projects ? { projects: i.projects } : {}), ...(i.for ? { for: i.for } : {}),
+      by: i.by, at: i.at, expires: i.expires, status: i.status === 'open' && i.expires <= now ? 'expired' as const : i.status,
+      ...(i.who ? { who: i.who } : {}), ...(i.closed ? { closed: i.closed } : {}) };
+  }
+  private gone() { return new LedgerError('not_found', 'This invitation cannot be used: it was used, revoked or has expired, or it is for another account'); }
+  /** The open invitation a person names, if it is theirs to answer: a link's code works for whoever holds it, an account
+   *  invitation only for its account. Anything else reads the same, so codes and ids cannot be probed. People only. */
+  private async resolve(caller: Caller, ref: InviteRef): Promise<{ inv: Invite; uid: string }> {
+    if (caller.kind !== 'person') throw new LedgerError('forbidden', 'Joining a team is for people, by their own hand, not agents');
+    const uid = assertUid(caller.uid), byCode = !!ref && typeof ref === 'object' && 'code' in ref;
+    let at: { space: string; id: string } | null = null;
+    if (byCode) { const c = (ref as { code: unknown }).code; if (typeof c === 'string' && CODE.test(c)) at = await this.store.inviteByHash(sha256(c)); }
+    else {
+      const r = ref as { space?: unknown; invite?: unknown };
+      if (typeof r?.space === 'string' && SPACE_ID.test(r.space) && typeof r.invite === 'string' && INVITE_ID.test(r.invite)) at = { space: r.space, id: r.invite };
+    }
+    const inv = at && await this.store.invite(at.space, at.id);
+    if (!inv || inv.status !== 'open' || inv.expires <= Date.now()) throw this.gone();
+    if (byCode ? inv.hash !== sha256((ref as { code: string }).code) : inv.for !== uid) throw this.gone();
+    return { inv, uid };
   }
 
   /** The owner removes someone, or a member or guest leaves. The owner leaves only after handing the space over. */

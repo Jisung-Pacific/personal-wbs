@@ -29,7 +29,7 @@ export const TABLE: Readonly<Record<Action, { by: readonly Relation[]; agent: 'w
   'plan.read':       { by: ['owner', 'member', 'guest', 'delegate'], agent: 'wbs.read' },   // a guest: assigned projects only
   'plan.write':      { by: ['owner', 'member'], agent: 'wbs.write' },
   'members.read':    { by: ['owner', 'member'], agent: 'wbs.read' },
-  'members.manage':  { by: ['owner'], agent: null },   // invite, remove, change a role, assign a guest's projects
+  'members.manage':  { by: ['owner'], agent: null },   // invite (joining is the invited person's own act), remove, change a role, assign a guest's projects
   'billing.manage':  { by: ['owner'], agent: null },
   'charter.read':    { by: ['owner', 'member', 'delegate'], agent: 'wbs.read' },
   'charter.propose': { by: ['owner', 'member'], agent: null },

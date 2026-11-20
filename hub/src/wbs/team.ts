@@ -11,6 +11,27 @@ import type { Views } from './views.js';
 import type { Briefs } from './weekly.js';
 import type { MasterAgent } from './master.js';
 
+/** The switcher's list (execution WBS 5.3): the spaces as Spaces.list gives them, each team the caller owns or is a
+ *  member of with what waits for them there — charter answers (agreeing to the version in force, answering a proposal),
+ *  plan proposals to decide and weekly reports to approve — so a person in several teams sees where to go next; then
+ *  the invitations waiting for their answer (kind "invite", with the hub page that answers them). Guests decide nothing;
+ *  a team's agent sees only its team. */
+export async function switchList(spaces: Spaces, caller: Caller, master?: MasterAgent, hubUrl?: string) {
+  const list = await spaces.list(caller);
+  const teams = await Promise.all(list.map(async s => {
+    if (s.kind !== 'team' || !('charter' in s) || s.role === 'guest') return s;
+    const c = s.charter, charter = (c.needs_consent ? 1 : 0) + (c.proposal && !c.proposal.answered ? 1 : 0);
+    let decide = 0, drafts = 0;
+    if (master && c.in_force !== null && !c.needs_consent) {
+      const m = await master.summary(caller, s.id).catch(e => { if (e instanceof LedgerError) return null; throw e; });
+      if (m && 'to_decide' in m) { decide = m.to_decide ?? 0; drafts = m.drafts ?? 0; }
+    }
+    return { ...s, waiting: { charter, decide, drafts, total: charter + decide + drafts } };
+  }));
+  const invites = (await spaces.received(caller)).map(i => ({ kind: 'invite' as const, ...i, ...(hubUrl ? { accept_url: `${hubUrl}/app/i/${i.space}/${i.invite}` } : {}) }));
+  return [...teams, ...invites];
+}
+
 export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, views: Views | undefined, caller: Caller, space: string, briefs?: Briefs, master?: MasterAgent) {
   const e = await spaces.enter(caller, space, 'plan.read');
   const s = await store.space(space);

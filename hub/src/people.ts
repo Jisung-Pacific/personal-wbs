@@ -1,6 +1,7 @@
 // The hub's own pages for people (/app): what only a person may do, by their own hand, never through an agent — make a
-// team space, propose and agree to its charter, add and remove members, leave, answer the Big Five questions and
-// publish, change or withdraw one's work-style and direction card (execution WBS 4.2). An agent's OAuth token cannot
+// team space, propose and agree to its charter, invite people and remove them, accept or decline an invitation (one
+// account, many teams: execution WBS 5.3), move between one's teams, leave, answer the Big Five questions and publish,
+// change or withdraw one's work-style and direction card (execution WBS 4.2). An agent's OAuth token cannot
 // act here: a person signs in on this page (the same accounts as the consent page), and the hub keeps a first-party
 // session in an HttpOnly, SameSite=Strict cookie; every change also needs the page's own request header and a
 // same-origin request, so another site can neither send nor forge one.
@@ -14,7 +15,8 @@ import { random } from './auth/tokens.js';
 import type { VerifyIdToken } from './auth/identity.js';
 import { person, type Caller } from './wbs/access.js';
 import { LedgerError } from './wbs/service.js';
-import type { Spaces } from './wbs/spaces.js';
+import { INVITE_DAYS, MAX_PEOPLE, type InviteRef, type Spaces } from './wbs/spaces.js';
+import { switchList } from './wbs/team.js';
 import { Cards, DEFAULT_SECTIONS, INSTRUCTIONS, MINI_IPIP, SCALE, TRAIT_KO } from './wbs/cards.js';
 import type { MasterAgent } from './wbs/master.js';
 
@@ -99,31 +101,72 @@ ${cfg.devLogin ? `$('df').onsubmit = e => { e.preventDefault(); go('dev:' + $('d
   }
 
   const nameOf = async (uid: string) => (await store.secret<{ name?: string }>(uid, 'profile'))?.name || `계정 ${uid.slice(0, 8)}`;
+  const namesOf = async (uids: Iterable<string>) => new Map(await Promise.all([...new Set(uids)].map(async u => [u, await nameOf(u)] as const)));
+  /** The spaces with what waits in each team, and the invitations waiting for the person (one account, many teams: 5.3). */
+  const mySpaces = async (who: Caller) => {
+    const all = await switchList(spaces, who, master);
+    return { teams: all.filter(s => s.kind === 'team') as TeamEntry[], invites: all.filter(s => s.kind === 'invite') as InviteEntry[] };
+  };
   const header = (uid: string, name: string) => `<header class="top"><a class="brand" href="/app">PP WBS Hub</a><span class="me">${esc(name)}</span>
 <button class="link" id="out" type="button">로그아웃</button></header>`;
 
   // ---------------------------------------------------------------- home: my spaces and my measurement
   r.get('/', signed(false), async (req: Signed, res) => {
-    const uid = req.uid!, who = person(uid), [list, mine, name] = await Promise.all([spaces.list(who), cards.mine(who), nameOf(uid)]);
-    const teams = list.filter(s => s.kind === 'team') as { id: string; name: string; role: string; charter?: { in_force: number | null; needs_consent: boolean; proposal: { version: number; answered: boolean } | null } }[];
-    const ROLE: Record<string, string> = { owner: '소유자', member: '멤버', guest: '게스트' };
-    const state = (t: typeof teams[number]) => !t.charter ? '' : t.charter.in_force === null ? '헌장 합의 전' : t.charter.needs_consent ? '헌장 동의 필요'
-      : t.charter.proposal && !t.charter.proposal.answered ? '헌장 제안에 답할 차례' : '';
+    const uid = req.uid!, who = person(uid), [{ teams, invites }, mine, name] = await Promise.all([mySpaces(who), cards.mine(who), nameOf(uid)]);
+    const inviters = await namesOf(invites.map(i => i.by));
+    const received = invites.length ? `<section class="box"><h2>받은 초대 <small>${invites.length}건</small></h2>
+<ul class="rows">${invites.map(i => `<li><a href="/app/i/${esc(i.space)}/${esc(i.invite)}"><b>${esc(i.name)}</b></a> <span class="chip">${ROLE[i.role]}</span> <span class="note">${esc(inviters.get(i.by))} 님 초대 · ${ymd(i.expires)}까지</span></li>`).join('')}</ul>
+<p class="note">열어서 읽고 수락하면 그 팀에 들어갑니다. 내 개인 원장은 어느 팀에도 보이지 않습니다.</p></section>` : '';
     page(res, '내 공간', `${header(uid, name)}<main>
 <h1>내 공간</h1>
+${received}
 <section class="box"><h2>성향 측정</h2>
 ${mine.assessment ? `<p>${ymd(mine.assessment.at)} 측정${mine.assessment.stale ? ' · <b class="warn">반년이 지났습니다. 다시 측정해 주세요</b>' : ''}</p>${traitBars(mine.assessment.traits)}` : '<p>아직 측정하지 않았습니다. 카드에 성향을 싣으려면 먼저 20문항(약 3분)에 답하세요.</p>'}
 <p><a class="btn primary" href="/app/assess">${mine.assessment ? '다시 측정' : '측정하기'}</a></p>
 <p class="note">점수는 내 공간에만 남고, 팀에는 내가 카드에 고른 항목만 갑니다. 답 자체는 저장하지 않습니다.</p></section>
 <section class="box"><h2>팀 공간</h2>
-${teams.length ? `<ul class="rows">${teams.map(t => `<li><a href="/app/t/${esc(t.id)}"><b>${esc(t.name)}</b></a> <span class="chip">${ROLE[t.role] ?? esc(t.role)}</span>${state(t) ? ` <span class="chip warn">${state(t)}</span>` : ''}</li>`).join('')}</ul>` : '<p>아직 속한 팀 공간이 없습니다.</p>'}
+${teams.length ? `<ul class="rows">${teams.map(t => `<li><a href="/app/t/${esc(t.id)}"><b>${esc(t.name)}</b></a> <span class="chip">${ROLE[t.role] ?? esc(t.role)}</span>${chips(t)}</li>`).join('')}</ul>` : '<p>아직 속한 팀 공간이 없습니다. 팀을 만들거나, 받은 초대를 수락하세요.</p>'}
 <form id="mk" class="inline"><label for="nm">새 팀 공간</label><input id="nm" maxlength="60" placeholder="팀 이름" required><button class="btn" type="submit">만들기</button></form></section>
-<section class="box"><h2>내 계정 id</h2><p>팀 소유자에게 이 id를 보내면 그 팀에 멤버로 추가할 수 있습니다.</p>
+<section class="box"><h2>내 계정 id</h2><p>팀 소유자에게 이 id를 보내면 그 팀이 이 계정으로 초대를 보냅니다. 초대는 이 페이지의 받은 초대에 뜨고, 내가 수락해야 들어갑니다.</p>
 <p class="inline"><code id="myid">${esc(uid)}</code><button class="btn" id="cp" type="button">복사</button></p></section>
 </main>`, `
 $('mk').onsubmit = e => { e.preventDefault(); api('POST', '/app/api/spaces', { name: $('nm').value }).then(s => { location.href = '/app/t/' + s.id; }).catch(err); };
 $('cp').onclick = () => copy($('myid'), $('cp'));`);
   });
+
+  // ---------------------------------------------------------------- an invitation, answered by the person (5.3)
+  // A link carries its code after '#', so it never reaches a server log or a referrer; an account invitation is named by
+  // its space and id, and only its account can open it. The page reads the invitation through the API and asks.
+  const joinPage = async (req: Signed, res: Response, ref: { space: string; invite: string } | null) => {
+    const uid = req.uid!, name = await nameOf(uid);
+    page(res, '팀 초대', `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p><h1 id="jt">팀 초대</h1>
+<section class="box" id="jv" aria-live="polite"><p class="note">초대를 확인하는 중입니다…</p></section><p class="err" id="err" role="alert"></p></main>`, `
+const REF = ${ref ? js(ref) : `(() => { const c = location.hash.slice(1); return c ? { code: c } : null; })()`};
+const E = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ROLE = ${js(ROLE)}, day = ms => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10), box = $('jv');
+const lines = c => '<ol class="lines">' + c.lines.map(l => '<li>' + E(l) + '</li>').join('') + '</ol>';
+const gone = m => { box.innerHTML = '<p>' + E(m) + '</p><p><a class="btn" href="/app">내 공간으로</a></p>'; };
+const NOT_FOUND = '이 초대는 쓸 수 없습니다. 이미 쓰였거나 취소·만료됐거나, 다른 계정에 온 초대입니다. 팀 소유자에게 새 초대를 받으세요.';
+if (!REF) gone('초대 링크에 코드가 없습니다. 받은 링크 전체를 주소창에 붙여 넣으세요.');
+else api('POST', '/app/api/invites/preview', REF).then(p => {
+  $('jt').textContent = p.space.name; document.title = p.space.name + ' · 팀 초대 · PP WBS Hub';
+  if (p.already) { box.innerHTML = '<p>이미 이 팀의 ' + E(ROLE[p.already]) + '입니다.</p><p><a class="btn primary" href="/app/t/' + encodeURIComponent(p.space.id) + '">팀 열기</a></p>'; return; }
+  let h = '<p><b>' + E(p.by_name) + '</b> 님이 <b>' + E(ROLE[p.role]) + '</b>로 초대했습니다. <span class="note">' + day(p.expires) + '까지 · 한 번만 쓰입니다</span></p>';
+  if (p.role === 'guest') h += '<p>게스트는 배정된 프로젝트' + (p.projects && p.projects.length ? '(' + E(p.projects.join(', ')) + ')' : '') + '의 계획과 작업만 읽고, 헌장에 동의하지 않습니다.</p>';
+  else if (p.charter) h += '<h2>헌장 ' + p.charter.version + '판</h2>' + lines(p.charter) + '<p class="note">멤버는 시행 중인 헌장에 동의하고 들어갑니다.</p>';
+  else h += '<p>아직 시행 중인 헌장이 없습니다. 들어간 뒤 ' + (p.proposal ? '헌장 ' + p.proposal.version + '판 제안에 모두 동의하면' : '헌장을 제안하고 모두 동의하면') + ' 팀 공간이 열립니다.</p>' + (p.proposal ? lines(p.proposal) : '');
+  h += '<p class="note">들어가도 내 개인 원장은 팀에 보이지 않습니다. 내가 고른 행의 고른 필드만 팀 계획에 공유됩니다.</p>'
+    + '<p class="inline"><button class="btn primary" id="yes" type="button">' + (p.charter ? '헌장에 동의하고 들어가기' : '들어가기') + '</button><button class="btn" id="no" type="button">거절</button></p>';
+  box.innerHTML = h;
+  $('yes').onclick = () => api('POST', '/app/api/join', { ...REF, ...(p.charter ? { agree: p.charter.version } : {}) })
+    .then(j => { location.href = '/app/t/' + encodeURIComponent(j.space); })
+    .catch(e => { if (e.code === 'consent_required') { $('err').textContent = '헌장이 바뀌었습니다. 새 판을 읽도록 다시 엽니다.'; setTimeout(reload, 1200); } else if (e.status === 404) gone(NOT_FOUND); else err(e); });
+  $('no').onclick = () => { const b = $('no'); if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 거절합니다'; return; }
+    api('POST', '/app/api/join/decline', REF).then(() => gone('초대를 거절했습니다. 이 초대는 다시 쓸 수 없습니다.')).catch(e => e.status === 404 ? gone(NOT_FOUND) : err(e)); };
+}).catch(e => e.status === 404 ? gone(NOT_FOUND) : gone(e.message));`);
+  };
+  r.get('/join', signed(false), (req: Signed, res) => joinPage(req, res, null));
+  r.get('/i/:space/:iid', signed(false), (req: Signed & { params: Record<string, string> }, res) => joinPage(req, res, { space: String(req.params.space), invite: String(req.params.iid) }));
 
   // ---------------------------------------------------------------- the questionnaire
   r.get('/assess', signed(false), async (req: Signed, res) => {
@@ -147,8 +190,10 @@ $('q').onsubmit = e => { e.preventDefault();
   // ---------------------------------------------------------------- one team: charter, members, cards
   r.get('/t/:space', signed(false), async (req: Signed & { params: Record<string, string> }, res) => {
     const uid = req.uid!, who = person(uid), id = req.params.space, name = await nameOf(uid);
-    const all = await spaces.list(who), me = all.find(s => s.id === id) as { id: string; name: string; role: string } | undefined;
+    const { teams } = await mySpaces(who), me = teams.find(s => s.id === id);
     if (!me) return page(res, '없는 공간', `${header(uid, name)}<main><h1>이 팀 공간을 찾을 수 없습니다</h1><p><a href="/app">내 공간으로</a></p></main>`);
+    // one account, many teams (5.3): every team of the person, one tap away, with what waits in each
+    const nav = teams.length > 1 ? `<nav class="teams" aria-label="내 팀"><ul>${teams.map(t => `<li><a href="/app/t/${esc(t.id)}"${t.id === id ? ' aria-current="page"' : ''}>${esc(t.name)}${t.waiting?.total ? ` <span class="chip warn">할 일 ${t.waiting.total}</span>` : ''}</a></li>`).join('')}</ul></nav>` : '';
     const ch = me.role === 'guest' ? null : await spaces.charter(who, id);
     const members = me.role === 'guest' ? [] : await spaces.members(who, id);
     const names = new Map(await Promise.all(members.map(async m => [m.uid, await nameOf(m.uid)] as const)));
@@ -164,11 +209,23 @@ ${ch.proposal ? `<div class="prop"><p><b>${ch.proposal.version}판 제안</b>${c
 ${myAnswer(ch.proposal) || (ch.proposal.objected as string[]).includes(uid) ? `<p class="inline"><button class="btn primary" data-consent="${ch.proposal.version}" data-agree="1" type="button">동의</button><button class="btn" data-consent="${ch.proposal.version}" data-agree="0" type="button">반대</button></p>` : '<p class="note">이 제안에 동의했습니다.</p>'}</div>` : `
 <details><summary>새 헌장 제안</summary><form id="pp" class="stack"><label for="pl">한 줄에 하나씩, 9줄까지</label><textarea id="pl" rows="6" required></textarea><input id="pn" maxlength="200" placeholder="바꾸는 이유(선택)"><button class="btn" type="submit">제안하기</button></form></details>`}
 </section>`;
-    const ROLE: Record<string, string> = { owner: '소유자', member: '멤버', guest: '게스트' };
+    const others = members.filter(m => m.role !== 'owner');
     const membersHtml = me.role === 'guest' ? '' : `<section class="box"><h2>구성원</h2><ul class="rows">${members.map(m => `<li><b>${esc(names.get(m.uid))}</b> <span class="chip">${ROLE[m.role]}</span>${m.projects?.length ? ` <span class="note">${esc(m.projects.join(', '))}</span>` : ''}
 ${owner && m.uid !== uid ? ` <button class="link" data-remove="${esc(m.uid)}" type="button">내보내기</button>` : ''}</li>`).join('')}</ul>
-${owner ? `<form id="add" class="inline"><label for="au">계정 id로 추가</label><input id="au" placeholder="u_…" required><select id="ar" aria-label="역할"><option value="member">멤버</option><option value="guest">게스트</option></select><input id="ap" aria-label="게스트 프로젝트" placeholder="게스트 프로젝트(예: 2026:4.3)"><button class="btn" type="submit">추가</button></form>`
+${owner ? (others.length ? `<details><summary>역할 바꾸기</summary><form id="rc" class="inline"><select id="rcu" aria-label="구성원">${others.map(m => `<option value="${esc(m.uid)}">${esc(names.get(m.uid))}</option>`).join('')}</select>
+<select id="rcr" aria-label="역할"><option value="member">멤버</option><option value="guest">게스트</option></select><input id="rcp" aria-label="게스트 프로젝트" placeholder="게스트 프로젝트(예: 2026:4.3)"><button class="btn" type="submit">바꾸기</button></form></details>` : '')
   : `<p><button class="link" id="leave" type="button">이 팀에서 나가기</button></p>`}</section>`;
+    // invitations (5.3): the owner hands a one-time link to one person or invites an account; joining is theirs to do
+    const sent = owner ? await spaces.invites(who, id) : [];
+    const sentNames = await namesOf(sent.flatMap(i => i.status === 'joined' ? [i.who!] : []));
+    const inviteHtml = !owner ? '' : `<section class="box"><h2>초대</h2>
+<p class="note">초대받은 사람이 직접 수락해야 들어옵니다. 초대는 ${INVITE_DAYS}일 뒤 만료되고 한 번만 쓰입니다. 구성원과 열린 초대를 합쳐 ${MAX_PEOPLE}명까지입니다.</p>
+<form id="inv" class="stack"><div class="inline"><label for="ir">역할</label><select id="ir"><option value="member">멤버</option><option value="guest">게스트</option></select>
+<input id="ip" aria-label="게스트 프로젝트" placeholder="게스트 프로젝트(예: 2026:4.3)" disabled></div>
+<p class="inline"><button class="btn primary" type="submit">초대 링크 만들기</button></p>
+<div class="inline"><label for="iu">또는 계정 id로</label><input id="iu" placeholder="u_…" autocomplete="off"><button class="btn" type="button" id="iacc">이 계정에 초대 보내기</button></div></form>
+<div id="nl" class="prop" hidden><p><b>초대 링크</b> <span class="note">지금 한 번만 보입니다. 초대할 한 사람에게만 보내세요.</span></p><p class="inline"><code id="lk"></code><button class="btn" id="lkcp" type="button">복사</button></p></div>
+<h3>보낸 초대</h3>${sent.length ? `<ul class="rows">${sent.slice(0, 12).map(i => sentHtml(i, sentNames)).join('')}</ul>` : '<p class="note">보낸 초대가 없습니다.</p>'}</section>`;
     const cardsHtml = me.role === 'guest' ? '' : `<section class="box"><h2>성향·방향성 카드</h2>
 ${gate ? `<p class="warn">${esc(gate === 'This team space opens once everyone has agreed to its charter' ? '헌장이 시행되면 카드를 쓸 수 있습니다.' : '헌장에 동의하면 카드를 쓸 수 있습니다.')}</p>` : !deck ? '' : deck.employee_mode ? `<p class="warn">이 팀은 직원 모드라 카드를 쓰지 않습니다.</p>` : `
 <p class="note">서로 맞춰 가기 위한 카드입니다. 내가 공개한 항목만큼만 서로 보이고, 순위·평균·평가에 쓰지 않습니다.</p>
@@ -198,13 +255,23 @@ ${owner ? `<details><summary>에이전트 위임하기</summary><p>이 주소로
       } catch (e) { if (!(e instanceof LedgerError)) throw e; }
     }
     const guestHtml = me.role === 'guest' ? '<section class="box"><p>게스트로 속한 팀입니다. 배정된 프로젝트의 계획과 작업은 에이전트나 대시보드에서 봅니다.</p></section>' : '';
-    page(res, me.name, `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p><h1>${esc(me.name)} <span class="chip">${ROLE[me.role]}</span></h1>
-${guestHtml}${charterHtml}${membersHtml}${agentHtml}${cardsHtml}</main>`, `
+    page(res, me.name, `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p>${nav}<h1>${esc(me.name)} <span class="chip">${ROLE[me.role]}</span></h1>
+${guestHtml}${charterHtml}${membersHtml}${inviteHtml}${agentHtml}${cardsHtml}</main>`, `
 const S = ${js(id)}, base = '/app/api/t/' + S;
 document.querySelectorAll('[data-consent]').forEach(b => { b.onclick = () => api('POST', base + '/charter/consent', { version: +b.dataset.consent, agree: b.dataset.agree === '1' }).then(reload).catch(err); });
 if ($('pp')) $('pp').onsubmit = e => { e.preventDefault(); api('POST', base + '/charter/propose', { lines: $('pl').value.split('\\n').map(s => s.trim()).filter(Boolean), note: $('pn').value }).then(reload).catch(err); };
 document.querySelectorAll('[data-remove]').forEach(b => { b.onclick = () => { if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 내보냅니다'; return; } api('DELETE', base + '/members/' + encodeURIComponent(b.dataset.remove)).then(reload).catch(err); }; });
-if ($('add')) $('add').onsubmit = e => { e.preventDefault(); const p = $('ap').value.split(',').map(s => s.trim()).filter(Boolean); api('POST', base + '/members', { uid: $('au').value.trim(), role: $('ar').value, projects: p }).then(reload).catch(err); };
+const projects = el => el.value.split(',').map(s => s.trim()).filter(Boolean);
+if ($('rc')) $('rc').onsubmit = e => { e.preventDefault(); const g = $('rcr').value === 'guest'; api('POST', base + '/members', { uid: $('rcu').value, role: $('rcr').value, ...(g ? { projects: projects($('rcp')) } : {}) }).then(reload).catch(err); };
+if ($('inv')) {
+  const role = () => $('ir').value, body = () => ({ role: role(), ...(role() === 'guest' ? { projects: projects($('ip')) } : {}) });
+  $('ir').onchange = () => { $('ip').disabled = role() !== 'guest'; };
+  $('inv').onsubmit = e => { e.preventDefault(); api('POST', base + '/invites', body()).then(r => {   // the code is shown once, in the fragment: never sent to the server again in a URL
+    $('lk').textContent = location.origin + '/app/join#' + r.code; $('nl').hidden = false; $('lkcp').focus(); }).catch(err); };
+  $('lkcp').onclick = () => copy($('lk'), $('lkcp'));
+  $('iacc').onclick = () => { const u = $('iu').value.trim(); if (!u) { $('iu').focus(); return; } api('POST', base + '/invites', { ...body(), for: u }).then(reload).catch(err); };
+}
+document.querySelectorAll('[data-revoke]').forEach(b => { b.onclick = () => api('DELETE', base + '/invites/' + encodeURIComponent(b.dataset.revoke)).then(reload).catch(err); });
 if ($('leave')) $('leave').onclick = () => { const b = $('leave'); if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 나갑니다(공유한 행은 팀에 고정된 사본으로 남음)'; return; } api('POST', base + '/leave').then(() => { location.href = '/app'; }).catch(err); };
 if ($('card')) $('card').onsubmit = e => { e.preventDefault();
   const v = id => ($(id) || {}).value || '', sections = [...document.querySelectorAll('input[name=sec]:checked')].map(x => x.value);
@@ -259,6 +326,17 @@ document.querySelectorAll('[data-week]').forEach(b => { b.onclick = () => { cons
     return spaces.setMember(who, sp(req), b.uid, b.role, b.role === 'guest' ? b.projects : undefined);
   }));
   api.delete('/t/:space/members/:uid', act((who, req) => spaces.removeMember(who, sp(req), String(req.params.uid))));
+  // invitations (5.3): the owner sends, the invited person reads and answers
+  api.post('/t/:space/invites', act((who, req) => {
+    const b = z.object({ role: z.enum(['member', 'guest']), projects: z.array(z.string()).max(20).optional(), for: z.string().regex(/^[A-Za-z0-9_-]{3,128}$/).optional() }).parse(req.body);
+    return spaces.invite(who, sp(req), { role: b.role, projects: b.role === 'guest' ? b.projects : undefined, for: b.for });
+  }));
+  api.get('/t/:space/invites', act((who, req) => spaces.invites(who, sp(req))));
+  api.delete('/t/:space/invites/:iid', act((who, req) => spaces.revoke(who, sp(req), String(req.params.iid))));
+  const refOf = (b: unknown): InviteRef => { const o = (b ?? {}) as Record<string, unknown>; return typeof o.code === 'string' ? { code: o.code } : { space: String(o.space ?? ''), invite: String(o.invite ?? '') }; };
+  api.post('/invites/preview', act(async (who, req) => { const p = await spaces.preview(who, refOf(req.body)); return { ...p, by_name: await nameOf(p.by) }; }));
+  api.post('/join', act((who, req) => spaces.join(who, refOf(req.body), req.body?.agree === undefined ? undefined : Number(req.body.agree))));
+  api.post('/join/decline', act((who, req) => spaces.decline(who, refOf(req.body))));
   api.post('/t/:space/leave', act((who, req) => spaces.removeMember(who, sp(req), (who as { uid: string }).uid)));
   api.post('/t/:space/card', act((who, req) => cards.publish(who, sp(req), req.body)));
   api.delete('/t/:space/card', act((who, req) => cards.withdraw(who, sp(req))));
@@ -271,6 +349,26 @@ document.querySelectorAll('[data-week]').forEach(b => { b.onclick = () => { cons
   }
   r.use('/api', api);
   return r;
+}
+
+const ROLE: Record<string, string> = { owner: '소유자', member: '멤버', guest: '게스트' };
+type TeamEntry = { id: string; kind: 'team'; name: string; role: string; projects?: string[];
+  charter?: { in_force: number | null; needs_consent: boolean; proposal: { version: number; answered: boolean } | null };
+  waiting?: { charter: number; decide: number; drafts: number; total: number } };
+type InviteEntry = { kind: 'invite'; space: string; invite: string; name: string; role: 'member' | 'guest'; projects?: string[]; by: string; expires: number };
+/** What waits for the person in a team, as chips: the charter's state, then decisions (plan proposals, weekly reports). */
+function chips(t: TeamEntry) {
+  const c = t.charter, state = !c ? '' : c.in_force === null ? '헌장 합의 전' : c.needs_consent ? '헌장 동의 필요' : c.proposal && !c.proposal.answered ? '헌장 제안에 답할 차례' : '';
+  const n = (t.waiting?.decide ?? 0) + (t.waiting?.drafts ?? 0);
+  return `${state ? ` <span class="chip warn">${state}</span>` : ''}${n ? ` <span class="chip warn">승인할 것 ${n}건</span>` : ''}`;
+}
+/** An invitation as its owner sees it, and the time it lapses or closed. A pending account invitation shows only the
+ *  account id the owner typed, never the stored name: a person's name reaches a team when they join. */
+function sentHtml(i: { id: string; kind: 'link' | 'account'; role: string; projects?: string[]; for?: string; status: string; expires: number; who?: string; closed?: number }, names: Map<string, string>) {
+  const target = i.kind === 'link' ? '링크' : i.status === 'joined' ? esc(names.get(i.for!)) : `계정 <code>${esc(i.for!.slice(0, 10))}</code>`;
+  const st = i.status === 'open' ? `${ymd(i.expires)}까지 열림` : i.status === 'expired' ? '만료' : i.status === 'joined' ? `${i.kind === 'link' ? `${esc(names.get(i.who!))} ` : ''}참여 · ${ymd(i.closed!)}`
+    : i.status === 'declined' ? `거절 · ${ymd(i.closed!)}` : `취소함 · ${ymd(i.closed!)}`;
+  return `<li><span class="chip">${ROLE[i.role]}</span> ${target}${i.projects?.length ? ` <span class="note">${esc(i.projects.join(', '))}</span>` : ''} <span class="note">· ${st}</span>${i.status === 'open' ? ` <button class="link" type="button" data-revoke="${esc(i.id)}">취소</button>` : ''}</li>`;
 }
 
 type CardView = { uid: string; sections: CardSection[]; measured: number; stale: boolean; traits: { trait: string; label: string; score: number; of: number }[];
@@ -309,7 +407,7 @@ ${assessed ? '' : '<p class="warn">성향 점수를 실으려면 먼저 <a href=
 const BASE_JS = `
 const $ = id => document.getElementById(id);
 const api = (method, path, body) => fetch(path, { method, credentials: 'same-origin', headers: { 'x-ppwbs': '1', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined })
-  .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || j.error || ('HTTP ' + r.status)); return j; });
+  .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.message || j.error || ('HTTP ' + r.status)), { status: r.status, code: j.error }); return j; });
 const err = e => { const el = $('err') || document.querySelector('.err'); if (el) el.textContent = e.message; };
 const reload = () => location.reload();
 const copy = (el, btn) => { try { navigator.clipboard.writeText(el.textContent).then(() => { btn.textContent = '복사됨'; }, () => sel(el)); } catch (e) { sel(el); } };
@@ -340,7 +438,7 @@ input, textarea, select { font: inherit; min-height: 40px; border-radius: 10px; 
 .err { color: var(--warn); min-height: 1.4em; font-size: 13.5px } code { font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere }
 .chip { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted) } .chip.warn { color: var(--warn); border-color: var(--warn) }
 .rows { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px } .lines { margin: 0 0 8px; padding-left: 22px }
-.prop { border-top: 1px dashed var(--line); padding-top: 10px; margin-top: 8px }
+.prop { border-top: 1px dashed var(--line); padding-top: 10px; margin-top: 8px } .box > h3 { margin-top: 14px }
 details > summary { cursor: pointer; color: var(--accent); min-height: 36px; display: flex; align-items: center }
 fieldset { border: 0; margin: 0; padding: 0; min-width: 0 } legend { padding: 0; font-weight: 600 }
 .item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 0 0 10px }
@@ -358,6 +456,9 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0 } legend { padding: 0;
 .secs { display: flex; flex-wrap: wrap; gap: 4px 14px } .secs legend { width: 100%; margin-bottom: 4px; font-weight: 400; color: var(--muted); font-size: 13.5px }
 .ck { display: inline-flex; gap: 6px; align-items: center; min-height: 32px } .ck input { width: 18px; min-height: 18px; height: 18px }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere } h2 small { font-weight: 400; color: var(--muted); font-size: 13px } .card + .card { margin-top: 10px }
+.teams ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px }
+.teams a { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--fg); text-decoration: none }
+.teams a[aria-current="page"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
 @media (max-width: 520px) { .scale { gap: 2px } .scale label { font-size: 11.5px; padding: 6px 0; word-break: keep-all } .item { padding: 10px } .trait { grid-template-columns: 6.5em 1fr 3.2em } }`;
 

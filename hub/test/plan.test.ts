@@ -10,6 +10,7 @@ import { Spaces } from '../src/wbs/spaces.js';
 import { Plans, planActual, titleOf } from '../src/wbs/plan.js';
 import { agent, person, type Caller } from '../src/wbs/access.js';
 import { todayKst } from '../src/wbs/model.js';
+import { admit } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const A = person('u_a'), B = person('u_b'), G = person('u_g'), X = person('u_x');
@@ -19,8 +20,8 @@ async function team() {
   const store = new MemoryStore(), spaces = new Spaces(store), plans = new Plans(store, spaces);
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));
   const s = await spaces.create(A, '시범 팀');
-  await spaces.setMember(A, s.id, 'u_b', 'member');
-  await spaces.setMember(A, s.id, 'u_g', 'guest', [`${Y}:3.4`]);
+  await admit(spaces, A, s.id, 'u_b', 'member');
+  await admit(spaces, A, s.id, 'u_g', 'guest', [`${Y}:3.4`]);
   await spaces.proposeCharter(A, s.id, ['공유는 필드 단위다.'], '');
   await spaces.consentCharter(B, s.id, 1, true);
   return { store, spaces, plans, ledger, id: s.id };
@@ -156,7 +157,7 @@ test('leaving: what a person shared stays with the team, frozen; the links stay 
   assert.equal((await store.shared(id)).length, 1, 'the team keeps what was shared');
 
   // becoming a guest freezes too; sharing again after returning as a member makes it live
-  await spaces.setMember(A, id, 'u_b', 'member'); await spaces.consentCharter(B, id, 1, true);
+  await admit(spaces, A, id, 'u_b', 'member');   // back by a new invitation, agreeing to the charter in force
   const b2 = (await ledger.add(actorB, row('플랜 화면 초안'))).created;
   await plans.share(B, { year: b2.year, code: b2.code, space: id, plan: '3.4.1' });
   await spaces.setMember(A, id, 'u_b', 'guest', [`${Y}:3.4`]);

@@ -11,6 +11,7 @@ import { Views } from '../src/wbs/views.js';
 import { Cards, MINI_IPIP, scoreMiniIpip, workIndicators } from '../src/wbs/cards.js';
 import { agent, person, type Caller } from '../src/wbs/access.js';
 import type { SharedWork } from '../src/store/types.js';
+import { admit } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const A = person('u_a'), B = person('u_b'), C = person('u_c'), G = person('u_g');
@@ -29,7 +30,7 @@ async function setup() {
   const store = new MemoryStore(), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views), cards = new Cards(store, spaces, views);
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));
   const s = await spaces.create(A, '시범 팀');
-  for (const [u, role] of [['u_b', 'member'], ['u_c', 'member'], ['u_g', 'guest']] as const) await spaces.setMember(A, s.id, u, role, role === 'guest' ? ['2026:4.3'] : undefined);
+  for (const [u, role] of [['u_b', 'member'], ['u_c', 'member'], ['u_g', 'guest']] as const) await admit(spaces, A, s.id, u, role, role === 'guest' ? ['2026:4.3'] : undefined);
   await spaces.proposeCharter(A, s.id, ['공유는 필드 단위다.']);
   const open = async () => { await spaces.consentCharter(B, s.id, 1, true); await spaces.consentCharter(C, s.id, 1, true); };   // the charter in force
   return { store, spaces, plans, cards, ledger, id: s.id, open };

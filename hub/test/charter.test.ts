@@ -1,12 +1,14 @@
 // The team charter as the strategy document sets it: a team space opens only when everyone has agreed to a charter of
 // at most 9 lines; each newcomer enters after agreeing; a change takes effect only with everyone's agreement; every
-// version stays in the record with dated answers. Agents read the charter but never agree or propose.
+// version stays in the record with dated answers. Agents read the charter but never agree or propose. A newcomer joins
+// by an invitation and agrees on joining (spaces.join).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryStore } from '../src/store/memory.js';
 import { LedgerError } from '../src/wbs/service.js';
 import { Spaces } from '../src/wbs/spaces.js';
 import { agent, person, type Caller } from '../src/wbs/access.js';
+import { admit } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const A = person('u_a'), B = person('u_b'), C = person('u_c'), D = person('u_d'), G = person('u_g');
@@ -24,8 +26,8 @@ const CHARTER = [
 ];
 async function team() {
   const store = new MemoryStore(), spaces = new Spaces(store), s = await spaces.create(A, '내 팀');
-  await spaces.setMember(A, s.id, 'u_b', 'member'); await spaces.setMember(A, s.id, 'u_c', 'member');
-  await spaces.setMember(A, s.id, 'u_g', 'guest', ['2026:4.3']);
+  await admit(spaces, A, s.id, 'u_b', 'member'); await admit(spaces, A, s.id, 'u_c', 'member');
+  await admit(spaces, A, s.id, 'u_g', 'guest', ['2026:4.3']);
   return { store, spaces, id: s.id };
 }
 
@@ -47,15 +49,22 @@ test('the space opens only when everyone has agreed; an objection holds it; a ne
   assert.ok((opened.in_force!.agreed as { at: number }[]).every(x => x.at > 0), 'every agreement is dated');
   for (const who of [A, B, C, G]) assert.equal(await outcome(spaces.view(who, id, 'read')), 'ok');
 
-  // a newcomer: listed as needing consent, kept out until agreeing to the version in force; the others are unaffected
-  await spaces.setMember(A, id, 'u_d', 'member');
-  const row = (await spaces.list(D)).find(x => x.id === id) as { charter?: unknown };
-  assert.deepEqual(row.charter, { in_force: 1, needs_consent: true, proposal: null });
-  assert.equal(await outcome(spaces.view(D, id, 'read')), 'consent_required');
-  assert.equal(await outcome(spaces.view(B, id, 'write')), 'ok');
-  await spaces.consentCharter(D, id, 1, true);
+  // a newcomer joins by an invitation, agreeing to the version in force on joining (the agreement is dated with the rest)
+  const inv = await spaces.invite(A, id, { role: 'member', for: 'u_d' }), ref = { space: id, invite: inv.id };
+  assert.equal(await outcome(spaces.join(D, ref)), 'consent_required', 'a member joins agreeing to the charter in force');
+  assert.equal(await outcome(spaces.join(D, ref, 2)), 'consent_required', 'and to the version in force, not another');
+  await spaces.join(D, ref, 1);
   assert.equal(await outcome(spaces.view(D, id, 'write')), 'ok');
-  assert.equal(await outcome(spaces.consentCharter(D, id, 1, false)), 'invalid', 'the version in force is changed by a proposal, not an objection');
+  assert.deepEqual(((await spaces.charter(A, id)).in_force!.agreed as { uid: string }[]).map(x => x.uid), ['u_a', 'u_b', 'u_c', 'u_d']);
+  // a guest made a member: listed as needing consent, kept out until agreeing; the others are unaffected
+  await spaces.setMember(A, id, 'u_g', 'member');
+  const row = (await spaces.list(G)).find(x => x.id === id) as { charter?: unknown };
+  assert.deepEqual(row.charter, { in_force: 1, needs_consent: true, proposal: null });
+  assert.equal(await outcome(spaces.view(G, id, 'read')), 'consent_required');
+  assert.equal(await outcome(spaces.view(B, id, 'write')), 'ok');
+  await spaces.consentCharter(G, id, 1, true);
+  assert.equal(await outcome(spaces.view(G, id, 'write')), 'ok');
+  assert.equal(await outcome(spaces.consentCharter(G, id, 1, false)), 'invalid', 'the version in force is changed by a proposal, not an objection');
 });
 
 test('a change takes effect only with everyone\'s agreement, and every version stays in the record', async () => {

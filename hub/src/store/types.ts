@@ -117,6 +117,19 @@ export interface ViewEntry {
 /** `projects`: for a guest, the projects (packages, as "YYYY:<code>", e.g. "2026:4.3") whose plan and work it may read. */
 export interface Membership { uid: string; role: SpaceRole; since: number; by: string; projects?: string[] }
 
+/** An invitation to a team space (execution WBS 5.3). A person joins a team only by accepting one, by their own hand, so
+ *  one account can belong to several teams without anyone adding it. A link invitation carries a one-time code that the
+ *  owner hands to one person (only the code's SHA-256 is kept, in `hash`); an account invitation names the account it is
+ *  for and waits in that account's list. Either is used once (joined or declined), can be revoked, and lapses at `expires`. */
+export interface Invite {
+  id: string; space: string; role: 'member' | 'guest'; projects?: string[];
+  hash?: string; for?: string;
+  by: string; at: number; expires: number;
+  status: 'open' | 'joined' | 'declined' | 'revoked';
+  /** who used it (joined or declined) and when it closed (joined, declined or revoked) */
+  who?: string; closed?: number;
+}
+
 /** One ledger row: the 22 columns of wbs.csv, under English keys. All values are strings ('' when empty). */
 export interface Row {
   year: string; code: string; level: string; area: string; package: string; parent: string; task: string;
@@ -223,6 +236,19 @@ export interface Store {
   setOwner(id: string, uid: string): Promise<void>;
   /** Shreds the space's data key, then removes its ledger, its members and their entries in the members' own lists. */
   deleteSpace(id: string): Promise<void>;
+  // invitations (execution WBS 5.3)
+  /** Every invitation of a space, newest first. */
+  invites(id: string): Promise<Invite[]>;
+  invite(id: string, iid: string): Promise<Invite | null>;
+  /** Where the open link invitation with this code hash is. */
+  inviteByHash(hash: string): Promise<{ space: string; id: string } | null>;
+  /** The open account invitations waiting for this account. */
+  invitesFor(uid: string): Promise<{ space: string; id: string }[]>;
+  /** Stores a new invitation with its look-up entries. */
+  putInvite(inv: Invite): Promise<void>;
+  /** Reads the invitation and the space's members and writes what `fn` returns, atomically and one call at a time per
+   *  space: the invitation (closing it drops its look-up entries) and, when someone joins, their membership. */
+  inviteTx<T>(id: string, iid: string, fn: (inv: Invite | null, members: Membership[]) => Promise<{ put?: Invite; member?: Membership; out: T }>): Promise<T>;
   /** Every version of the space's charter, oldest first. */
   charters(id: string): Promise<CharterVersion[]>;
   /** Reads the versions and writes the ones `fn` returns in `put`, atomically (one change at a time per space). */

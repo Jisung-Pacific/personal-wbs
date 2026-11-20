@@ -3,7 +3,7 @@
 import {
   spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type WeeklyBrief, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
   type Intent, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store, type ViewEntry,
-  type Delegation, type Proposal, type WeeklyReport,
+  type Delegation, type Invite, type Proposal, type WeeklyReport,
 } from './types.js';
 
 /** The key a view log merges on, and the merge itself (shared with the Firestore store). */
@@ -103,7 +103,7 @@ export class MemoryStore implements Store {
   async putSecret(uid: string, name: string, value: unknown) { this.secrets.set(`${uid}|${name}`, structuredClone(value)); }
   async secret<T>(uid: string, name: string) { const v = this.secrets.get(`${uid}|${name}`); return v === undefined ? null : structuredClone(v) as T; }
   async deleteAccount(uid: string) {
-    this.dropOwner(uid);
+    this.dropOwner(uid); this.byUser.delete(uid);   // invitations waiting for the account go with its own list
     for (const [h, r] of this.refresh) if (r.uid === uid) this.refresh.delete(h);
   }
   /** Everything kept under one ledger owner: its rows and history, inbox, secrets and (for an account) its plan links. */
@@ -139,8 +139,44 @@ export class MemoryStore implements Store {
     next.role = 'owner'; s.owner = uid;
   }
   async deleteSpace(id: string) {
+    for (const inv of this.inviteOf.get(id)?.values() ?? []) this.unindex(inv);
     this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.intentOf.delete(id);
-    this.cardOf.delete(id); this.noCards.delete(id); this.weeklyOf.delete(id); this.agentOf.delete(id); this.dropOwner(spaceOwner(id));
+    this.cardOf.delete(id); this.noCards.delete(id); this.weeklyOf.delete(id); this.agentOf.delete(id); this.inviteOf.delete(id); this.dropOwner(spaceOwner(id));
+  }
+
+  // invitations (5.3): per space by id, plus the look-ups an open one is found by (its code hash, the account it is for)
+  private inviteOf = new Map<string, Map<string, Invite>>();
+  private byHash = new Map<string, { space: string; id: string }>();
+  private byUser = new Map<string, Map<string, { space: string; id: string }>>();
+  private index(inv: Invite) {
+    if (inv.status !== 'open') return this.unindex(inv);
+    if (inv.hash) this.byHash.set(inv.hash, { space: inv.space, id: inv.id });
+    if (inv.for) { let m = this.byUser.get(inv.for); if (!m) { m = new Map(); this.byUser.set(inv.for, m); } m.set(`${inv.space}|${inv.id}`, { space: inv.space, id: inv.id }); }
+  }
+  private unindex(inv: Invite) {
+    if (inv.hash) this.byHash.delete(inv.hash);
+    if (inv.for) this.byUser.get(inv.for)?.delete(`${inv.space}|${inv.id}`);
+  }
+  async invites(id: string) { return [...(this.inviteOf.get(id)?.values() ?? [])].map(i => structuredClone(i)).sort((a, b) => b.at - a.at); }
+  async invite(id: string, iid: string) { const i = this.inviteOf.get(id)?.get(iid); return i ? structuredClone(i) : null; }
+  async inviteByHash(hash: string) { const r = this.byHash.get(hash); return r ? { ...r } : null; }
+  async invitesFor(uid: string) { return [...(this.byUser.get(uid)?.values() ?? [])].map(r => ({ ...r })); }
+  async putInvite(inv: Invite) {
+    if (!this.spaces.has(inv.space)) throw new Error(`no space ${inv.space}`);
+    let m = this.inviteOf.get(inv.space); if (!m) { m = new Map(); this.inviteOf.set(inv.space, m); }
+    if (m.has(inv.id)) throw new Error(`invite ${inv.id} exists`);
+    m.set(inv.id, structuredClone(inv)); this.index(inv);
+  }
+  async inviteTx<T>(id: string, iid: string, fn: (inv: Invite | null, members: Membership[]) => Promise<{ put?: Invite; member?: Membership; out: T }>): Promise<T> {
+    const lock = 'invite|' + id, prev = this.locks.get(lock) || Promise.resolve();   // per space: joins count the seats one at a time
+    const run = prev.then(async () => {
+      const { put, member, out } = await fn(await this.invite(id, iid), await this.members(id));
+      if (member) await this.putMember(id, member);   // writes land only after fn succeeds
+      if (put) { this.inviteOf.get(id)?.set(put.id, structuredClone(put)); this.index(put); }
+      return out;
+    });
+    this.locks.set(lock, run.catch(() => undefined));
+    return run;
   }
 
   // the team plan, people's links to it and the shared fields a space holds

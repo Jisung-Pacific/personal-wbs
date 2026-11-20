@@ -19,6 +19,7 @@ import { TokenIssuer } from '../src/auth/tokens.js';
 import { devVerifier } from '../src/auth/identity.js';
 import { createApp } from '../src/app.js';
 import { openapi } from '../src/rest.js';
+import { admit } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const DAY = 86_400_000, ms = (d: string) => Date.parse(d + 'T00:00:00Z'), ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -48,8 +49,8 @@ async function fixture() {
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));
   const briefs = new Briefs(store, spaces, () => T);
   const s = await spaces.create(A, '시범 팀'), id = s.id;
-  await spaces.setMember(A, id, 'u_b', 'member');
-  await spaces.setMember(A, id, 'u_g', 'guest', [`${Y}:2.1`]);
+  await admit(spaces, A, id, 'u_b', 'member');
+  await admit(spaces, A, id, 'u_g', 'guest', [`${Y}:2.1`]);
   await spaces.proposeCharter(A, id, ['공유는 필드 단위다.'], '');
   await spaces.consentCharter(B, id, 1, true);
   await plans.put(A, id, { intents: [{ why: '출시 마감을 지킨다' }] });

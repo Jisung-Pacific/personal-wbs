@@ -16,7 +16,7 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
-| `/app` | People's own pages: team spaces, charters, members, cards — signed in in person, never through an agent. |
+| `/app` | People's own pages: team spaces, charters, invitations, members, cards — signed in in person, never through an agent. |
 | `/internal/weekly` | The Monday run of the weekly team briefs; only Cloud Scheduler's own account may call it. |
 
 Ledger rules live in the tools: one concrete result per row, codes assigned by the hub (next free number, never
@@ -57,6 +57,16 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   A team space opens once a charter (at most 9 lines) is in force, which takes every owner's and member's agreement;
   each of them enters after agreeing to the version in force, a change takes effect only when everyone agrees, and every
   version stays with its dated answers as the change record. Agreeing and proposing are people's acts, never an agent's.
+- **One account, many teams** (execution WBS 5.3): nobody is put in a team; a person joins only by accepting an
+  invitation, by their own hand. The owner makes a one-time link for one person (its code goes after `#`, so it never
+  reaches a server log or a referrer, and only its SHA-256 is stored) or invites an account by its id (it waits on that
+  account's hub page, and the account's agents can see it in `wbs_spaces` to tell the person, never answer it).
+  Invitations are used once, can be revoked, lapse after 7 days and hold a seat while open; a member agrees to the
+  charter in force on joining, and a pending account invitation shows the owner only the account id typed, never the
+  person's name. `wbs_spaces` (REST `GET /v1/spaces`) lists every team with what waits for the person there (charter
+  answers, plan proposals to decide, weekly reports to approve) and the invitations waiting (kind `invite`, with the hub
+  page that answers them); the hub's team pages carry a bar to move between one's teams, and leaving one team leaves
+  the others as they were.
 - **Team plan and shared work**: a team space keeps a plan, its project WBS (scope, deliverable, done criterion,
   prerequisites, owners and planned dates under codes of its own, permanent and parked rather than deleted), sealed under
   the space's key. Work stays in each person's own ledger: a person links a row to a plan item and chooses the fields the
@@ -77,7 +87,8 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   agent sees counts; guests do not see it). Plan against actual names each item's intent, own or inherited. A team
   space's `wbs_brief` and `wbs_team` carry the alignment too.
 - **People's own pages** (`/app`): what only a person may do, by their own hand — make a team space, propose and agree
-  to its charter, add or remove members, leave — on the hub's own pages, signed in with the same accounts as the consent
+  to its charter, invite people (a link or an account), accept or decline an invitation, change a role, remove members,
+  move between one's teams, leave — on the hub's own pages, signed in with the same accounts as the consent
   page. The hub keeps a first-party session in an HttpOnly, SameSite=Strict cookie, accepts changes only with the
   pages' own request header from this origin, and an agent's access token opens none of it.
 - **Work-style and direction cards** (execution WBS 4.2): each person answers the Mini-IPIP once (Donnellan, Oswald,

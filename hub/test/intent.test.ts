@@ -11,6 +11,7 @@ import { Plans, intentAlignment, MAX_INTENTS } from '../src/wbs/plan.js';
 import { agent, person } from '../src/wbs/access.js';
 import { todayKst } from '../src/wbs/model.js';
 import type { Intent, PlanItem, SharedWork } from '../src/store/types.js';
+import { admit } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const A = person('u_a'), B = person('u_b'), G = person('u_g');
@@ -20,8 +21,8 @@ async function team() {
   const store = new MemoryStore(), spaces = new Spaces(store), plans = new Plans(store, spaces);
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));
   const s = await spaces.create(A, '시범 팀');
-  await spaces.setMember(A, s.id, 'u_b', 'member');
-  await spaces.setMember(A, s.id, 'u_g', 'guest', [`${Y}:2.1`]);
+  await admit(spaces, A, s.id, 'u_b', 'member');
+  await admit(spaces, A, s.id, 'u_g', 'guest', [`${Y}:2.1`]);
   await spaces.proposeCharter(A, s.id, ['공유는 필드 단위다.'], '');
   await spaces.consentCharter(B, s.id, 1, true);
   return { store, spaces, plans, ledger, id: s.id };

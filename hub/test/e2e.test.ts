@@ -3,65 +3,18 @@
 // per-account isolation, scope-limited tool lists, and a byte-exact round trip of the real ledger.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { loadConfig } from '../src/config.js';
 import { MemoryStore } from '../src/store/memory.js';
-import { TokenIssuer } from '../src/auth/tokens.js';
-import { devVerifier } from '../src/auth/identity.js';
-import { createApp } from '../src/app.js';
 import { Ledger } from '../src/wbs/service.js';
 import { Spaces } from '../src/wbs/spaces.js';
 import { person } from '../src/wbs/access.js';
+import { admit, boot, connect, form, json, mcp, pkce } from './support.js';
 
 const LEDGER = process.env.HUB_TEST_LEDGER || '';   // a real wbs.csv to round-trip (optional)
 const EVENTS = process.env.HUB_TEST_EVENTS || '';
 
-async function boot() {
-  const store = new MemoryStore();
-  const srv = http.createServer(); await new Promise<void>(r => srv.listen(0, r));
-  const base = `http://localhost:${(srv.address() as AddressInfo).port}`;
-  const cfg = loadConfig({ HUB_PUBLIC_URL: base, HUB_DEV_LOGIN: '1' } as NodeJS.ProcessEnv);
-  const issuer = await TokenIssuer.create(cfg.publicUrl, 3600);
-  srv.on('request', createApp(cfg, store, issuer, devVerifier()));
-  return { base, store, close: () => new Promise<void>(r => srv.close(() => r())) };
-}
-const pkce = () => { const v = randomBytes(32).toString('base64url'); return { v, c: createHash('sha256').update(v).digest('base64url') }; };
-const form = (o: Record<string, string>) => new URLSearchParams(o).toString();
-
-/** Registration → consent → code → tokens, as a client and a person would do it. */
-async function connect(base: string, opts: { uid: string; scope?: string; resource?: string; clientName?: string; clientId?: string; redirect?: string }) {
-  const redirect = opts.redirect || 'http://localhost:9999/cb';
-  let clientId = opts.clientId;
-  if (!clientId) {
-    const reg = await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: opts.clientName || 'Claude', redirect_uris: [redirect], token_endpoint_auth_method: 'none' }) });
-    assert.equal(reg.status, 201); clientId = (await reg.json()).client_id as string;
-  }
-  const { v, c } = pkce(), resource = opts.resource || `${base}/mcp`;
-  const q = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: redirect, code_challenge: c, code_challenge_method: 'S256', scope: opts.scope || 'wbs.read wbs.write', state: 'st8', resource });
-  const page = await fetch(`${base}/oauth/authorize?${q}`);
-  assert.equal(page.status, 200, await page.clone().text());
-  assert.match(page.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
-  const req = /name="req" value="([^"]+)"/.exec(await page.text())![1];
-  const ok = await fetch(`${base}/oauth/approve`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ req, id_token: `dev:${opts.uid}`, decision: 'allow' }) });
-  assert.equal(ok.status, 302);
-  const back = new URL(ok.headers.get('location')!);
-  assert.equal(back.searchParams.get('state'), 'st8'); assert.equal(back.searchParams.get('iss'), base);
-  const code = back.searchParams.get('code')!;
-  const tok = await fetch(`${base}/oauth/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ grant_type: 'authorization_code', code, redirect_uri: redirect, client_id: clientId, code_verifier: v, resource }) });
-  assert.equal(tok.status, 200, await tok.clone().text());
-  return { clientId, code, verifier: v, redirect, ...(await tok.json()) as { access_token: string; refresh_token: string; scope: string } };
-}
-async function mcp(base: string, token: string, path = '/mcp') {
-  const client = new Client({ name: 'e2e', version: '1' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${base}${path}`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
-  return client;
-}
-const json = (r: unknown) => JSON.parse(((r as { content: { text: string }[] }).content[0]).text);
 
 test('discovery and the 401 challenge', async () => {
   const { base, close } = await boot();
@@ -178,7 +131,7 @@ test('team space over MCP and REST: agents list it, write and read its plan; a g
   const { base, store, close } = await boot();
   try {
     const spaces = new Spaces(store), s = await spaces.create(person('u_j'), '연구실');   // people create and staff spaces
-    await spaces.setMember(person('u_j'), s.id, 'u_g', 'guest', ['2026:4.3']);
+    await admit(spaces, person('u_j'), s.id, 'u_g', 'guest', ['2026:4.3']);
     const c = await mcp(base, (await connect(base, { uid: 'u_j', clientName: 'Claude' })).access_token);
     // closed until a charter is in force; the owner alone is everyone who must agree, so proposing opens it
     const shut = await c.callTool({ name: 'wbs_search', arguments: { space: s.id } });
@@ -223,8 +176,8 @@ test('team intents over MCP and REST: written with the plan, set against the sha
   const { base, store, close } = await boot();
   try {
     const spaces = new Spaces(store), s = await spaces.create(person('u_j'), '연구실');
-    await spaces.setMember(person('u_j'), s.id, 'u_m', 'member');
-    await spaces.setMember(person('u_j'), s.id, 'u_g', 'guest', ['2026:4.3']);
+    await admit(spaces, person('u_j'), s.id, 'u_m', 'member');
+    await admit(spaces, person('u_j'), s.id, 'u_g', 'guest', ['2026:4.3']);
     await spaces.proposeCharter(person('u_j'), s.id, ['공유는 필드 단위다.']);
     await spaces.consentCharter(person('u_m'), s.id, 1, true);
     const c = await mcp(base, (await connect(base, { uid: 'u_j', clientName: 'Claude' })).access_token);
@@ -328,7 +281,7 @@ test('a team\'s own address: the connection is that team\'s environment — work
   const { base, store, close } = await boot();
   try {
     const spaces = new Spaces(store), s = await spaces.create(person('u_j'), '연구실');
-    await spaces.setMember(person('u_j'), s.id, 'u_m', 'member');
+    await admit(spaces, person('u_j'), s.id, 'u_m', 'member');
     await spaces.proposeCharter(person('u_j'), s.id, ['공유는 필드 단위다.']);
     await spaces.consentCharter(person('u_m'), s.id, 1, true);
     const team = `/mcp/t/${s.id}`, resource = `${base}${team}`;
@@ -395,3 +348,4 @@ test('a team\'s own address: the connection is that team\'s environment — work
     assert.equal(new URL(no.headers.get('location')!).searchParams.get('error'), 'access_denied');
   } finally { await close(); }
 });
+
