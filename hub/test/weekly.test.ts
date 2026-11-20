@@ -80,6 +80,9 @@ test('the team brief: progress, bottlenecks, shared blockers, risks within seven
   assert.ok(late.why.includes('마감 3일 지남') && late.why.includes('진행 중인데 공유된 작업 없음'), late.why.join());
   assert.deepEqual(b.blockers, ['외부 심사·승인: 결제사 키 발급']);
   assert.deepEqual(b.risks.map(r => [r.code, r.why]), [['1.1', ['작업 1/2행']], ['1.2', ['공유된 작업 없음', '선행 1.1 미완료']]]);
+  assert.deepEqual(b.risks.map(r => [r.rows, r.done, r.pending]), [[2, 1, []], [0, 0, ['1.1']]], 'the same, as data for screens');
+  assert.ok(late.flags.includes('late') && late.flags.includes('no_work') && late.slip_days === 3);
+  assert.deepEqual([b.intents.active, b.intents.items, b.intents.unanchored, b.intents.off_intent_rows], [1, [], 1, 0]);
   assert.deepEqual(b.next.map(x => [x.code, x.due]), [['1.1', plus(T, 3)], ['1.2', plus(T, 5)]]);
   assert.ok(b.lines.some(l => l === '의도: 의도 없는 계획 1개'), b.lines.join('\n'));
   assert.ok(b.lines.some(l => l.startsWith('리스크(7일 안): 1.1 결제 연동 ~')));

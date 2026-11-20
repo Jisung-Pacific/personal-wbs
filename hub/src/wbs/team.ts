@@ -26,7 +26,7 @@ export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, v
   const { space: _s, ...pva } = plan;
   const alignment = e.relation === 'guest' ? null : await plans.align(caller, space).then(({ space: _x, ...a }) => a);
   // last week's team brief (4.3): about the work only; guests do not get the whole team's picture
-  const weekly = briefs && may('brief.read') ? await briefs.weekly(caller, space).then(b => ({ week: b.week, from: b.from, to: b.to, as_of: b.as_of, lines: b.lines })) : null;
+  const weekly = briefs && may('brief.read') ? await briefs.weekly(caller, space).then(({ space: _w, generated: _g, ...b }) => b) : null;
   return {
     space: { id: s.id, name: s.name, role: e.relation, ...(e.projects ? { projects: e.projects } : {}) },
     charter: charter && { in_force: charter.in_force?.version ?? null,   // getting here means the caller agreed to it (the gate)

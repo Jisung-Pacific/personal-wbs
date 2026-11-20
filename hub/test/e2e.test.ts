@@ -246,6 +246,8 @@ test('team intents over MCP and REST: written with the plan, set against the sha
     // the weekly brief (4.3): in the team screen and on its own, the same text; coaching for the person alone
     const wk = json(await c.callTool({ name: 'wbs_weekly', arguments: { space: s.id } }));
     assert.deepEqual(team.weekly.lines, wk.lines); assert.match(wk.lines[0], /^진척: /);
+    assert.deepEqual([team.weekly.progress, team.weekly.risks, team.weekly.next], [wk.progress, wk.risks, wk.next], 'and the same parts as data');
+    assert.equal('generated' in team.weekly, false);
     assert.match(json(await c.callTool({ name: 'wbs_coach', arguments: {} })).note, /본인에게만/);
     await c.close();
     // a guest's agent: no alignment anywhere, and the brief still answers

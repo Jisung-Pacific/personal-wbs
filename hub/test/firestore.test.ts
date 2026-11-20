@@ -82,7 +82,7 @@ test('Firestore store: the team plan, intents, cards, weekly briefs, links and s
   // weekly briefs (4.3): sealed per week under the space key, listed in order, every team space found for the run
   const brief = { week: '2026-W46', from: '2026-11-09', to: '2026-11-15', as_of: '2026-11-16', generated: 1,
     progress: { rows_done: 1, rows_started: 1, items_done: [] }, bottlenecks: [], blockers: [], risks: [],
-    intents: { lines: [], off_intent_rows: 0, unanchored: 0 }, next: [], lines: ['진척: 공유 행 완료 1 · 시작 1 · 완료된 계획 항목 없음'] };
+    intents: { lines: [], items: [], active: 0, off_intent_rows: 0, unanchored: 0 }, next: [], lines: ['진척: 공유 행 완료 1 · 시작 1 · 완료된 계획 항목 없음'] };
   await store.putWeekly(s.id, brief); await store.putWeekly(s.id, { ...brief, week: '2026-W45' });
   assert.deepEqual(await store.weekly(s.id, '2026-W46'), brief);
   assert.deepEqual(await store.weeklies(s.id), ['2026-W45', '2026-W46']);

@@ -60,7 +60,7 @@ export function teamWeekly(input: { items: PlanItem[]; work: SharedWork[]; inten
     .map(p => ({ code: p.code, scope: p.scope }));
   const pa = planActual(items, work, asOf, false), byCode = new Map(pa.items.map(r => [`${r.year} ${r.code}`, r]));
   const WHY: Record<string, string> = { late: '마감 지남', waiting: '대기 중인 작업', parked_but_active: '보류인데 작업 진행', work_done_plan_open: '작업은 끝났는데 계획은 열림', plan_done_work_open: '계획은 완료인데 작업이 남음', no_work: '진행 중인데 공유된 작업 없음' };
-  const bottlenecks = pa.items.filter(r => r.flags.length).map(r => ({ code: r.code, scope: r.scope,
+  const bottlenecks = pa.items.filter(r => r.flags.length).map(r => ({ code: r.code, scope: r.scope, flags: [...r.flags], slip_days: r.slip_days ?? null,
     why: r.flags.map(fl => fl === 'late' && r.slip_days ? `마감 ${r.slip_days}일 지남` : WHY[fl] ?? fl) }));
   const blockers = [...new Set(f.filter(x => x.status !== '완료' && x.blocker).map(x => short(String(x.blocker))))].slice(0, 3);
   // risks: open items due within the next seven days with no work yet, or waiting on an unfinished item
@@ -71,7 +71,7 @@ export function teamWeekly(input: { items: PlanItem[]; work: SharedWork[]; inten
     if (!a?.rows) why.push('공유된 작업 없음'); else if (a.status !== '완료') why.push(`작업 ${a.done}/${a.rows}행`);
     const pending = p.depends_on.filter(d => !done.has(d.includes(' ') ? d : `${p.year} ${d}`));
     if (pending.length) why.push(`선행 ${pending.join(', ')} 미완료`);
-    return { code: p.code, scope: p.scope, due: p.due, why };
+    return { code: p.code, scope: p.scope, due: p.due, rows: a?.rows ?? 0, done: a?.done ?? 0, pending, why };
   }).filter(r => r.why.length);
   const next = open.filter(p => full(p.due) && p.due > asOf && p.due <= horizon).sort((a, b) => a.due.localeCompare(b.due)).map(p => ({ code: p.code, scope: p.scope, due: p.due }));
   const al = intentAlignment(items, intents, work, false);
@@ -89,7 +89,8 @@ export function teamWeekly(input: { items: PlanItem[]; work: SharedWork[]; inten
   ];
   return { week: week.week, from: week.from, to: week.to, as_of: asOf, generated: Date.now(),
     progress: { rows_done: rowsDone, rows_started: rowsStarted, items_done: itemsDone }, bottlenecks, blockers, risks,
-    intents: { lines: intentLines, off_intent_rows: al.off_intent_work, unanchored: al.unanchored.length }, next, lines };
+    intents: { lines: intentLines, items: al.intents.filter(i => i.flags.length).map(i => ({ id: i.id, rank: i.rank, why: i.why, flags: [...i.flags], share: i.share })),
+      active: al.intents.length, off_intent_rows: al.off_intent_work, unanchored: al.unanchored.length }, next, lines };
 }
 
 /** The person's own coaching: pace against their own past weeks, what is open, due or stalled, the work style their

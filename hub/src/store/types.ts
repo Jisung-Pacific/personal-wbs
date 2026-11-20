@@ -56,9 +56,12 @@ export interface Card {
 export interface WeeklyBrief {
   week: string; from: string; to: string; as_of: string; generated: number;
   progress: { rows_done: number; rows_started: number; items_done: { code: string; scope: string }[] };
-  bottlenecks: { code: string; scope: string; why: string[] }[]; blockers: string[];
-  risks: { code: string; scope: string; due: string; why: string[] }[];
-  intents: { lines: string[]; off_intent_rows: number; unanchored: number };
+  /** `flags`: the plan-vs-actual flags (late, waiting, …); `why`: the same in words, for agents */
+  bottlenecks: { code: string; scope: string; flags: string[]; slip_days: number | null; why: string[] }[]; blockers: string[];
+  /** `rows`/`done`: the shared work on it; `pending`: prerequisites not yet done */
+  risks: { code: string; scope: string; due: string; rows: number; done: number; pending: string[]; why: string[] }[];
+  /** `items`: the intents that drift (flags no_plan, no_work, focus_drift); `active`: intents in force */
+  intents: { lines: string[]; items: { id: string; rank: number; why: string; flags: string[]; share: number }[]; active: number; off_intent_rows: number; unanchored: number };
   next: { code: string; scope: string; due: string }[];
   lines: string[];
 }
