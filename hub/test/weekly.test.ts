@@ -186,7 +186,7 @@ test('POST /internal/weekly: only the scheduler\'s own account, and only where o
     await sp.proposeCharter(A, s.id, ['공유는 필드 단위다.'], '');   // a lone owner's proposal is the charter
     const r = await post({ authorization: 'Bearer scheduler-ok' });
     assert.equal(r.status, 200);
-    assert.deepEqual(await r.json(), { week: lastFullWeek(todayKst()).week, generated: 1, removed: 0 });
+    assert.deepEqual(await r.json(), { week: lastFullWeek(todayKst()).week, generated: 1, removed: 0, reviews: { released: 0, removed: 0 } });
     assert.deepEqual(await on.store.weeklies(s.id), [lastFullWeek(todayKst()).week]);
 
     // and the REST face: the brief by space and week, coaching for the token's own person

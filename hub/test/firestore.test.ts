@@ -88,6 +88,16 @@ test('Firestore store: the team plan, intents, cards, weekly briefs, links and s
   assert.deepEqual(await store.weeklies(s.id), ['2026-W45', '2026-W46']);
   assert.ok((await store.teamSpaceIds()).includes(s.id));
   await store.removeWeekly(s.id, '2026-W45'); assert.deepEqual(await store.weeklies(s.id), ['2026-W46']);
+  // mutual review (4.4): a round with its entries and replies, one sealed document each, gone with the round
+  const round = { id: '2026-Q4', from: '2026-10-01', to: '2026-12-31', opened: 1, by: a, due: '2026-12-04', participants: [a, b], released: null };
+  await store.putReviewRound(s.id, round);
+  await store.putReview(s.id, { round: '2026-Q4', by: a, about: b, answers: [{ q: 'p_work', text: '결제 연동을 끝냈다', refs: [] }], via: '', at: 1 });
+  await store.putReply(s.id, { round: '2026-Q4', by: a, text: '', goals: ['수요일 리뷰'], at: 2 });
+  assert.deepEqual(await store.reviewRounds(s.id), [round]);
+  assert.deepEqual([(await store.reviews(s.id, '2026-Q4')).length, (await store.replies(s.id, '2026-Q4'))[0].goals], [1, ['수요일 리뷰']]);
+  await store.removeReview(s.id, '2026-Q4', a, b); assert.equal((await store.reviews(s.id, '2026-Q4')).length, 0);
+  await store.removeReviewRound(s.id, '2026-Q4');
+  assert.deepEqual([await store.reviewRounds(s.id), await store.replies(s.id, '2026-Q4')], [[], []], 'the replies go with the round');
   await spaces.removeMember(person(b), s.id, b);
   assert.ok((await store.shared(s.id))[0].frozen, 'the copy stays with the team, frozen');
   await spaces.remove(person(a), s.id);

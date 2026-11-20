@@ -95,7 +95,7 @@ function project(uid: string, row: Row, link: PlanLink): SharedWork {
 }
 
 /** The intent a plan item serves: its own, else its nearest parent's (within the same plan year); '' for none. */
-function intentOf(items: PlanItem[]) {
+export function intentOf(items: PlanItem[]) {
   const byKey = new Map(items.map(p => [planKey(p.year, p.code), p]));
   return (p: PlanItem | undefined): string => {
     if (!p) return '';

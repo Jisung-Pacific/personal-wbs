@@ -10,12 +10,12 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 
 | Path | For |
 | --- | --- |
-| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, `wbs_charter`, `wbs_plan`, `wbs_shared`, `wbs_views`, `wbs_team`, `wbs_weekly`, `wbs_coach`, and with `wbs.write` also `wbs_add`, `wbs_update`, `wbs_plan_put`, `wbs_share`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
+| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, `wbs_charter`, `wbs_plan`, `wbs_shared`, `wbs_views`, `wbs_team`, `wbs_weekly`, `wbs_coach`, `wbs_review`, and with `wbs.write` also `wbs_add`, `wbs_update`, `wbs_plan_put`, `wbs_share`, `wbs_review_put`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
 | `/mcp/t/<space id>` | The same MCP server as one team space's environment (team defaults, work linked to its plan, no personal reads). |
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
-| `/app` | People's own pages: team spaces, charters, members, cards — signed in in person, never through an agent. |
+| `/app` | People's own pages: team spaces, charters, members, cards, the quarterly review — signed in in person, never through an agent. |
 | `/internal/weekly` | The Monday run of the weekly team briefs; only Cloud Scheduler's own account may call it. |
 
 Ledger rules live in the tools: one concrete result per row, codes assigned by the hub (next free number, never
@@ -90,6 +90,24 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   in person (agents neither fill, publish nor read cards); the team's delegated agent may read them. Nothing ranks,
   averages or totals people, and cards feed nothing else in the hub. A team with employees switches on employee mode,
   which removes every card; leaving a team takes one's card off it; reading others' cards is noted in their view logs.
+- **Mutual review** (execution WBS 4.4): once a quarter an owner opens a round (`wbs_review_put` action `open`, or the
+  hub's page); the owners and members at that moment take part and answer the same questions, with no ratings or
+  scores. Each writes a self-review (outputs that mattered, drift from the team's intents, what blocked them, progress
+  against last quarter's goals and their direction) and a review of every other participant (the output that served the
+  intents best, one behaviour to keep and one to change — each told through something that happened — and one next step
+  toward their direction). Beside each question the hub attaches the person's evidence: the rows they shared with the
+  team in the quarter with the plan item and intent each serves, the plan items they carry, their work per intent, last
+  quarter's goals and, under the cards' own symmetry, their direction; answers may cite it, and reading it is noted in
+  their view log. Agents run it as an interview (`wbs_review` with `about`) and record only the person's words; the
+  page offers the same form. Nothing is visible but to its writer until release — everyone done, or the due date
+  (14 days by default, 30 at most) passed. Disclosure is then symmetric: one reads a teammate's review of oneself only if
+  one wrote one about them, and teammates' self-reviews, replies and goals only if one wrote one's own; a review between
+  two others is never shown, and the team's agent sees progress only. After release each person replies and sets up to
+  three goals, which the next round attaches to their self-review: multisource feedback improves performance little on
+  average and mostly when recipients set goals and act on them (Smither, London & Reilly, 2005, *Personnel Psychology*
+  58(1), 33–66: 24 longitudinal studies). Leaving a team takes one out of its rounds with everything by or about one;
+  employee mode switches reviews off with the cards (and removes every round) until the adoption guide settles consent
+  there; the weekly run releases rounds past due and removes rounds older than four quarters.
 - **View log**: who read a person's shared rows is noted in that person's own space (the charter: views are visible to
   the one viewed) — the reader's account and role, the agent it read through or the team's own agent, the space, how
   many of the person's rows one read carried, and when (first and last time each day, how often). Only the person reads

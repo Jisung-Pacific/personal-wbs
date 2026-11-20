@@ -3,6 +3,7 @@
 import {
   spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type WeeklyBrief, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
   type Intent, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store, type ViewEntry,
+  type ReviewRound, type Review, type ReviewReply,
 } from './types.js';
 
 /** The key a view log merges on, and the merge itself (shared with the Firestore store). */
@@ -139,7 +140,7 @@ export class MemoryStore implements Store {
   }
   async deleteSpace(id: string) {
     this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.intentOf.delete(id);
-    this.cardOf.delete(id); this.noCards.delete(id); this.weeklyOf.delete(id); this.dropOwner(spaceOwner(id));
+    this.cardOf.delete(id); this.noCards.delete(id); this.weeklyOf.delete(id); this.reviewOf.delete(id); this.dropOwner(spaceOwner(id));
   }
 
   // the team plan, people's links to it and the shared fields a space holds
@@ -176,6 +177,21 @@ export class MemoryStore implements Store {
   async putWeekly(id: string, b: WeeklyBrief) { let m = this.weeklyOf.get(id); if (!m) { m = new Map(); this.weeklyOf.set(id, m); } m.set(b.week, structuredClone(b)); }
   async weeklies(id: string) { return [...(this.weeklyOf.get(id)?.keys() ?? [])].sort(); }
   async removeWeekly(id: string, week: string) { this.weeklyOf.get(id)?.delete(week); }
+  // mutual review (4.4): per space, per round: the round, its reviews by writer and subject, the replies by writer
+  private reviewOf = new Map<string, Map<string, { round: ReviewRound; reviews: Map<string, Review>; replies: Map<string, ReviewReply> }>>();
+  private roundOf(id: string, round: string) { return this.reviewOf.get(id)?.get(round); }
+  async reviewRounds(id: string) { return [...(this.reviewOf.get(id)?.values() ?? [])].map(x => structuredClone(x.round)).sort((a, b) => a.id.localeCompare(b.id)); }
+  async putReviewRound(id: string, r: ReviewRound) {
+    let m = this.reviewOf.get(id); if (!m) { m = new Map(); this.reviewOf.set(id, m); }
+    const x = m.get(r.id); if (x) x.round = structuredClone(r); else m.set(r.id, { round: structuredClone(r), reviews: new Map(), replies: new Map() });
+  }
+  async removeReviewRound(id: string, round: string) { this.reviewOf.get(id)?.delete(round); }
+  async reviews(id: string, round: string) { return [...(this.roundOf(id, round)?.reviews.values() ?? [])].map(r => structuredClone(r)); }
+  async putReview(id: string, r: Review) { this.roundOf(id, r.round)?.reviews.set(`${r.by}~${r.about}`, structuredClone(r)); }
+  async removeReview(id: string, round: string, by: string, about: string) { this.roundOf(id, round)?.reviews.delete(`${by}~${about}`); }
+  async replies(id: string, round: string) { return [...(this.roundOf(id, round)?.replies.values() ?? [])].map(r => structuredClone(r)); }
+  async putReply(id: string, r: ReviewReply) { this.roundOf(id, r.round)?.replies.set(r.by, structuredClone(r)); }
+  async removeReply(id: string, round: string, by: string) { this.roundOf(id, round)?.replies.delete(by); }
   private cardOf = new Map<string, Map<string, Card>>();
   private noCards = new Set<string>();
   async cards(id: string) { return [...(this.cardOf.get(id)?.values() ?? [])].map(c => structuredClone(c)); }

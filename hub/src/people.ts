@@ -16,6 +16,7 @@ import { person, type Caller } from './wbs/access.js';
 import { LedgerError } from './wbs/service.js';
 import type { Spaces } from './wbs/spaces.js';
 import { Cards, DEFAULT_SECTIONS, INSTRUCTIONS, MINI_IPIP, SCALE, TRAIT_KO } from './wbs/cards.js';
+import type { Reviews } from './wbs/review.js';
 
 const FIREBASE_SDK = '12.19.0';   // the same pinned compat builds as the consent page
 const SESSION_TTL = 8 * 3600;
@@ -24,10 +25,10 @@ const js = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 const ymd = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);   // KST, like the ledger
 const SECTION_KO: Record<CardSection, string> = { ...TRAIT_KO, direction: '방향성' };
 
-export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards }
+export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards; reviews?: Reviews }
 type Signed = Request & { uid?: string };
 
-export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards }: PeopleDeps): Router {
+export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, reviews }: PeopleDeps): Router {
   const r = express.Router(), secure = cfg.publicUrl.startsWith('https://'), COOKIE = secure ? '__Host-ppwbs' : 'ppwbs', origin = new URL(cfg.publicUrl).origin;
   const cookieOf = (req: Request) => (req.get('cookie') || '').split(/;\s*/).map(c => c.split('=')).find(([k]) => k === COOKIE)?.[1];
   const setCookie = (res: Response, v: string, age: number) => res.append('Set-Cookie', `${COOKIE}=${v}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`);
@@ -175,12 +176,18 @@ ${editor(deck.mine as CardView | null, !!assess)}
 ${deck.mine ? cardHtml(deck.mine as CardView, '내 카드', true) : ''}
 ${deck.mine ? (deck.cards.length ? `<div class="grid">${(deck.cards as CardView[]).map(c => cardHtml(c, names.get(c.uid) || '구성원', false)).join('')}</div>` : '<p>아직 다른 사람이 공개한 카드가 없습니다.</p>')
   : `<p>${(deck as { others_published?: number }).others_published ?? 0}명이 카드를 공개했습니다. 내 카드를 공개하면 내가 고른 항목만큼 서로 보입니다.</p>`}`}
-${owner ? `<details><summary>직원 모드</summary><p class="note">직원이 있는 팀은 동의가 자유롭지 않아 카드를 끕니다. 켜면 이 팀의 카드가 모두 지워집니다.</p>
+${owner ? `<details><summary>직원 모드</summary><p class="note">직원이 있는 팀은 동의가 자유롭지 않아 카드와 상호 리뷰를 끕니다. 켜면 이 팀의 카드와 리뷰가 모두 지워집니다.</p>
 <p><button class="btn" id="emp" data-on="${deck?.employee_mode ? '0' : '1'}" type="button">${deck?.employee_mode ? '직원 모드 끄기' : '직원 모드 켜기'}</button></p></details>` : ''}
 </section>`;
+    let rv: Awaited<ReturnType<Reviews['summary']>> | null = null;
+    if (me.role !== 'guest' && reviews && !gate) { try { rv = await reviews.summary(who, id); } catch (e) { if (!(e instanceof LedgerError)) throw e; } }
+    const reviewHtml = !rv ? '' : `<section class="box"><h2>상호 리뷰</h2>${'quarter' in rv
+      ? `<p>${esc(rv.quarter)} 리뷰 <span class="chip">${rv.status === 'open' ? '진행 중' : '공개됨'}</span> · 마감 ${esc(rv.due)} · ${rv.counts.done}/${rv.counts.participants}명 마침${rv.status === 'open' && rv.participant ? ` · 내가 남은 리뷰 ${rv.todo}` : ''}</p>`
+      : `<p>${rv.employee_mode ? '이 팀은 직원 모드라 상호 리뷰를 쓰지 않습니다.' : '분기마다 서로의 일을 근거와 함께 리뷰합니다. 점수 없이, 서로 써 준 만큼만 보입니다.'}</p>`}
+<p><a class="btn" href="/app/t/${esc(id)}/review">${'quarter' in rv ? (rv.status === 'open' ? '리뷰 쓰기' : '결과 보기') : owner ? '리뷰 열기' : '자세히'}</a></p></section>`;
     const guestHtml = me.role === 'guest' ? '<section class="box"><p>게스트로 속한 팀입니다. 배정된 프로젝트의 계획과 작업은 에이전트나 대시보드에서 봅니다.</p></section>' : '';
     page(res, me.name, `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p><h1>${esc(me.name)} <span class="chip">${ROLE[me.role]}</span></h1>
-${guestHtml}${charterHtml}${membersHtml}${cardsHtml}</main>`, `
+${guestHtml}${charterHtml}${membersHtml}${reviewHtml}${cardsHtml}</main>`, `
 const S = ${js(id)}, base = '/app/api/t/' + S;
 document.querySelectorAll('[data-consent]').forEach(b => { b.onclick = () => api('POST', base + '/charter/consent', { version: +b.dataset.consent, agree: b.dataset.agree === '1' }).then(reload).catch(err); });
 if ($('pp')) $('pp').onsubmit = e => { e.preventDefault(); api('POST', base + '/charter/propose', { lines: $('pl').value.split('\\n').map(s => s.trim()).filter(Boolean), note: $('pn').value }).then(reload).catch(err); };
@@ -191,7 +198,98 @@ if ($('card')) $('card').onsubmit = e => { e.preventDefault();
   const v = id => ($(id) || {}).value || '', sections = [...document.querySelectorAll('input[name=sec]:checked')].map(x => x.value);
   api('POST', base + '/card', { sections, direction: { role: v('dr'), grow: v('dg'), ask: v('da') }, rebuttal: { traits: v('rt'), work: v('rw'), direction: v('rd') } }).then(reload).catch(err); };
 if ($('wd')) $('wd').onclick = () => api('DELETE', base + '/card').then(reload).catch(err);
-if ($('emp')) $('emp').onclick = () => { const b = $('emp'); if (b.dataset.on === '1' && b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 카드가 모두 지워집니다'; return; } api('POST', base + '/employee-mode', { on: b.dataset.on === '1' }).then(reload).catch(err); };`);
+if ($('emp')) $('emp').onclick = () => { const b = $('emp'); if (b.dataset.on === '1' && b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 카드와 리뷰가 모두 지워집니다'; return; } api('POST', base + '/employee-mode', { on: b.dataset.on === '1' }).then(reload).catch(err); };`);
+  });
+
+  // ---------------------------------------------------------------- the quarter's mutual review (4.4)
+  const ROLE_KO: Record<string, string> = { owner: '소유자', member: '멤버', guest: '게스트' };
+  const plusDays = (n: number) => ymd(Date.now() + n * 864e5);
+  /** The review pages need the team's charter agreed, like the rest of the team space; anything else is a plain notice. */
+  const reviewGate = (e: unknown) => e instanceof LedgerError ? (/charter/i.test(e.message) ? '헌장에 동의하면 상호 리뷰를 볼 수 있습니다.' : e.message) : null;
+  const refsHtml = (refs: { label: string }[]) => refs.length ? `<span class="refs">${refs.map(x => `<span class="chip">${esc(x.label)}</span>`).join('')}</span>` : '';
+  const answersHtml = (answers: { question: string; text: string; refs: { label: string }[] }[]) =>
+    `<dl class="ans">${answers.map(a => `<div><dt>${esc(a.question)}</dt><dd>${esc(a.text)} ${refsHtml(a.refs)}</dd></div>`).join('')}</dl>`;
+
+  r.get('/t/:space/review', signed(false), async (req: Signed & { params: Record<string, string> }, res) => {
+    const uid = req.uid!, who = person(uid), id = req.params.space, name = await nameOf(uid);
+    const sp0 = (await spaces.list(who)).find(s => s.id === id) as { id: string; name: string; role: string } | undefined;
+    const shell = (body: string, script = '') => page(res, '상호 리뷰', `${header(uid, name)}<main><p><a href="/app/t/${esc(id)}">← ${esc(sp0?.name ?? '팀')}</a></p><h1>상호 리뷰</h1>${body}<p class="err" id="err" role="alert"></p></main>`,
+      `const S = ${js(id)}, base = '/app/api/t/' + S;\n${script}`);
+    if (!sp0 || sp0.role === 'guest' || !reviews) return shell('<section class="box"><p>이 팀의 상호 리뷰는 소유자와 멤버가 씁니다.</p></section>');
+    let g: Awaited<ReturnType<Reviews['get']>>;
+    try { g = await reviews.get(who, id); } catch (e) { const m = reviewGate(e); if (m === null) throw e; return shell(`<section class="box"><p class="warn">${esc(m)}</p></section>`); }
+    const owner = sp0.role === 'owner';
+    const how = `<section class="box"><h2>어떻게 하나요</h2><ol class="lines"><li>소유자가 분기 리뷰를 열면, 그때의 소유자와 멤버가 모두 참여합니다.</li>
+<li>내 자기 리뷰 하나와 다른 사람마다 리뷰 하나를 씁니다. 질문 옆에 그 사람이 이 분기에 팀에 공유한 작업이 근거로 붙습니다. 점수는 없습니다.</li>
+<li>모두 마치거나 마감일이 지나면 공개됩니다. 그전에는 각자 쓴 것만 보입니다.</li>
+<li>공개는 대칭입니다. 내가 리뷰를 써 준 사람의 리뷰만 받아 보고, 내 자기 리뷰를 쓴 경우에만 다른 사람의 자기 리뷰와 목표가 보입니다. 두 사람 사이의 리뷰는 다른 사람에게 보이지 않습니다.</li>
+<li>공개 뒤에는 받은 리뷰에 답하고 다음 분기 목표를 세 개까지 적습니다. 다음 분기 리뷰에 근거로 다시 붙습니다.</li></ol></section>`;
+    if (g.status === 'none') {
+      const emp = (g as { employee_mode: boolean }).employee_mode;
+      return shell(`<section class="box"><p>${emp ? '이 팀은 직원 모드라 상호 리뷰를 쓰지 않습니다.' : '아직 연 리뷰가 없습니다.'}</p>
+${owner && !emp ? `<form id="ro" class="inline"><label for="rd">마감일</label><input id="rd" type="date" value="${plusDays(14)}" min="${plusDays(1)}" max="${plusDays(30)}" required><button class="btn primary" type="submit">이번 분기 리뷰 열기</button></form>` : !emp ? '<p class="note">소유자가 분기 리뷰를 엽니다.</p>' : ''}</section>${how}`,
+        `if ($('ro')) $('ro').onsubmit = e => { e.preventDefault(); api('POST', base + '/review/open', { due: $('rd').value }).then(reload).catch(err); };`);
+    }
+    const v = g as Exclude<typeof g, { status: 'none' }> & { participants?: { uid: string; name: string; me: boolean; written_by_me: boolean }[]; participant?: boolean; todo?: string[];
+      results?: null | { about_me: { by: { name: string }; via: string; answers: { q: string; question: string; text: string; refs: { label: string }[] }[] }[]; hidden_about_me: number;
+        written: { about: string; name: string; answers: { question: string; text: string; refs: { label: string }[] }[] }[];
+        selves: { by: { name: string }; self: { question: string; text: string; refs: { label: string }[] }[] | null; reply: { text: string; goals: string[] } | null }[];
+        my_reply: { text: string; goals: string[] } | null } };
+    const head = `<section class="box"><h2>${esc(v.quarter)} 리뷰 <span class="chip">${v.status === 'open' ? '진행 중' : '공개됨'}</span></h2>
+<p class="note">${esc(v.from)} ~ ${esc(v.to)}의 일 · 마감 ${esc(v.due)} · ${v.counts.done}/${v.counts.participants}명 마침${v.released ? ` · ${esc(v.released)} 공개` : ''}</p>`;
+    if (v.status === 'open') {
+      const people = v.participant ? `<ul class="rows">${v.participants!.map(p => `<li><b>${esc(p.me ? '내 자기 리뷰' : p.name)}</b> <span class="chip${p.written_by_me ? '' : ' warn'}">${p.written_by_me ? '작성함' : '남음'}</span>
+<a class="btn" href="/app/t/${esc(id)}/review/${esc(p.me ? 'self' : p.uid)}">${p.written_by_me ? '고치기' : '쓰기'}</a></li>`).join('')}</ul>
+<p class="note">에이전트에게 "상호 리뷰 진행해 줘"라고 해도 같은 질문을 근거와 함께 하나씩 묻고, 내 말 그대로 적습니다.</p>` : '<p>이 리뷰가 열린 뒤에 합류해 참여하지 않습니다.</p>';
+      return shell(`${head}${people}</section>${how}`);
+    }
+    const res0 = v.results;
+    if (!res0) return shell(`${head}<p>${esc((v as { note?: string }).note ?? '')}</p></section>`);
+    const byQ = new Map<string, { name: string; via: string; text: string; refs: { label: string }[]; question: string }[]>();
+    for (const x of res0.about_me) for (const a of x.answers) { const l = byQ.get(a.q) ?? []; l.push({ name: x.by.name, via: x.via, text: a.text, refs: a.refs, question: a.question }); byQ.set(a.q, l); }
+    const received = res0.about_me.length ? [...byQ.values()].map(l => `<div class="qa"><h3>${esc(l[0].question)}</h3><ul class="rows">${l.map(a => `<li><b>${esc(a.name)}</b>${a.via ? ` <span class="chip">${esc(a.via)} 통해 기록</span>` : ''} ${esc(a.text)} ${refsHtml(a.refs)}</li>`).join('')}</ul></div>`).join('')
+      : '<p>받아 볼 수 있는 리뷰가 없습니다.</p>';
+    const hidden = res0.hidden_about_me ? `<p class="note">내가 리뷰를 써 주지 않은 ${res0.hidden_about_me}명의 리뷰는 보이지 않습니다.</p>` : '';
+    const mr = res0.my_reply;
+    const goalsIn = [0, 1, 2].map(i => `<input id="g${i}" maxlength="200" aria-label="목표 ${i + 1}" placeholder="다음 분기 목표 ${i + 1}" value="${esc(mr?.goals[i] ?? '')}">`).join('');
+    return shell(`${head}</section>
+<section class="box"><h2>나에 대한 리뷰</h2>${received}${hidden}</section>
+<section class="box"><h2>답하기와 다음 분기 목표</h2><form id="rp" class="stack"><label for="rt">받은 리뷰에 대한 내 생각(선택)</label><textarea id="rt" maxlength="1500">${esc(mr?.text ?? '')}</textarea>
+<fieldset class="stack"><legend>다음 분기 목표(세 개까지)</legend>${goalsIn}</fieldset><button class="btn primary" type="submit">저장</button></form></section>
+${res0.selves.length ? `<section class="box"><h2>팀원의 자기 리뷰와 목표</h2>${res0.selves.map(x => `<div class="card"><h3>${esc(x.by.name)}</h3>${x.self ? answersHtml(x.self) : ''}${x.reply ? `${x.reply.text ? `<p class="rebut"><span>답</span> ${esc(x.reply.text)}</p>` : ''}${x.reply.goals.length ? `<ol class="lines">${x.reply.goals.map(t => `<li>${esc(t)}</li>`).join('')}</ol>` : ''}` : ''}</div>`).join('')}</section>`
+  : '<section class="box"><p class="note">팀원의 자기 리뷰와 목표는 내 자기 리뷰를 쓴 경우에만 보입니다.</p></section>'}
+<section class="box"><h2>내가 쓴 리뷰</h2>${res0.written.map(w => `<details><summary>${esc(w.about === 'self' ? '내 자기 리뷰' : w.name)}</summary>${answersHtml(w.answers)}</details>`).join('') || '<p>쓴 리뷰가 없습니다.</p>'}</section>`,
+      `$('rp').onsubmit = e => { e.preventDefault(); api('POST', base + '/review/reply', { text: $('rt').value, goals: [0, 1, 2].map(i => $('g' + i).value.trim()).filter(Boolean) }).then(reload).catch(err); };`);
+  });
+
+  r.get('/t/:space/review/:about', signed(false), async (req: Signed & { params: Record<string, string> }, res) => {
+    const uid = req.uid!, who = person(uid), id = req.params.space, about = req.params.about, name = await nameOf(uid);
+    const back = `<p><a href="/app/t/${esc(id)}/review">← 상호 리뷰</a></p>`;
+    if (!reviews) return page(res, '상호 리뷰', `${header(uid, name)}<main>${back}<p>상호 리뷰를 쓸 수 없습니다.</p></main>`);
+    let q: Awaited<ReturnType<Reviews['questions']>>;
+    try { q = await reviews.questions(who, id, about); } catch (e) { const m = reviewGate(e); if (m === null) throw e; return page(res, '상호 리뷰', `${header(uid, name)}<main>${back}<p class="warn">${esc(m)}</p></main>`); }
+    const ev = q.evidence, picks = [...ev.work.map(w => ({ ref: w.ref, label: w.label })), ...ev.items.map(i => ({ ref: i.ref, label: i.label }))];
+    const evHtml = `<section class="box"><h2>근거 <small>${esc(q.from)} ~ ${esc(q.to)}</small></h2>
+<h3>이 분기 팀에 공유한 작업</h3>${ev.work.length ? `<ul class="rows">${ev.work.map(w => `<li>${esc(w.label)}${w.intent ? ` <span class="chip">${esc(w.intent)}</span>` : ''}${w.start || w.end ? ` <span class="note">${esc(w.start)}~${esc(w.end)}</span>` : ''}</li>`).join('')}</ul>` : '<p class="note">이 분기에 공유한 작업이 없습니다.</p>'}
+${ev.items.length ? `<h3>맡은 계획 항목</h3><ul class="rows">${ev.items.map(i => `<li>${esc(i.label)}${i.due ? ` <span class="note">~${esc(i.due)}</span>` : ''}</li>`).join('')}</ul>` : ''}
+${ev.intents.length || ev.off_intent_rows ? `<h3>의도별 작업</h3><ul class="rows">${ev.intents.map(i => `<li>${i.rank}순위 ${esc(i.why)} · ${i.rows}행</li>`).join('')}${ev.off_intent_rows ? `<li>의도 밖 ${ev.off_intent_rows}행</li>` : ''}</ul>` : ''}
+${ev.goals ? `<h3>지난 분기 목표</h3>${ev.goals.length ? `<ol class="lines">${ev.goals.map(t => `<li>${esc(t)}</li>`).join('')}</ol>` : '<p class="note">적은 목표가 없습니다.</p>'}` : ''}
+${ev.direction ? `<h3>방향(카드)</h3><dl class="dir">${[['1년 뒤 맡고 싶은 역할', ev.direction.role], ['키우고 싶은 것', ev.direction.grow], ['팀에 바라는 것', ev.direction.ask]].filter(x => x[1]).map(([k, t]) => `<dt>${k}</dt><dd>${esc(t)}</dd>`).join('')}</dl>` : ''}</section>`;
+    const prior = new Map((q.answers ?? []).map(a => [a.q, a]));
+    const form = `<form id="rv" class="stack">${q.questions.map(x => {
+      const a = prior.get(x.id), chosen = new Set((a?.refs ?? []).map(r0 => r0.ref));
+      return `<div class="q" data-q="${esc(x.id)}"><label for="a_${esc(x.id)}"><b>${esc(x.text)}</b>${x.required ? ' <span class="chip">필수</span>' : ' <span class="chip">선택</span>'}</label>
+<textarea id="a_${esc(x.id)}" maxlength="1200"${x.required ? ' required minlength="10"' : ''}>${esc(a?.text ?? '')}</textarea>
+${picks.length ? `<details><summary>근거 고르기(선택, 다섯 개까지)</summary><div class="secs">${picks.map((p, i) => `<label class="ck"><input type="checkbox" name="r_${esc(x.id)}" value="${esc(p.ref)}" id="r_${esc(x.id)}_${i}"${chosen.has(p.ref) ? ' checked' : ''}>${esc(p.label)}</label>`).join('')}</div></details>` : ''}</div>`;
+    }).join('')}<button class="btn primary" type="submit">저장</button></form>`;
+    page(res, '상호 리뷰', `${header(uid, name)}<main>${back}<h1>${esc(q.about.self ? '내 자기 리뷰' : `${q.about.name}에 대한 리뷰`)} <small>${esc(q.quarter)} · 마감 ${esc(q.due)}</small></h1>
+<p class="note">점수는 없습니다. 실제로 있었던 일과 근거로 적어 주세요. 공개 전에는 나만 보고, 마감 전까지 고칠 수 있습니다.</p>
+${evHtml}<section class="box">${form}<p class="err" id="err" role="alert"></p></section></main>`, `
+const S = ${js(id)}, base = '/app/api/t/' + S, ABOUT = ${js(about)};
+$('rv').onsubmit = e => { e.preventDefault();
+  const answers = [...document.querySelectorAll('.q[data-q]')].map(d => ({ q: d.dataset.q, text: d.querySelector('textarea').value.trim(),
+    refs: [...d.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value).slice(0, 5) })).filter(a => a.text);
+  api('POST', base + '/review/submit', { about: ABOUT, answers }).then(() => { location.href = '/app/t/' + S + '/review'; }).catch(err); };`);
   });
 
   // ---------------------------------------------------------------- the API the pages call
@@ -212,6 +310,11 @@ if ($('emp')) $('emp').onclick = () => { const b = $('emp'); if (b.dataset.on ==
   api.delete('/t/:space/card', act((who, req) => cards.withdraw(who, sp(req))));
   api.get('/t/:space/cards', act((who, req) => cards.list(who, sp(req))));
   api.post('/t/:space/employee-mode', act((who, req) => cards.setEmployeeMode(who, sp(req), req.body?.on === true)));
+  if (reviews) {
+    api.post('/t/:space/review/open', act((who, req) => reviews.open(who, sp(req), { due: req.body?.due || undefined })));
+    api.post('/t/:space/review/submit', act((who, req) => reviews.submit(who, sp(req), req.body)));
+    api.post('/t/:space/review/reply', act((who, req) => reviews.reply(who, sp(req), { text: req.body?.text, goals: req.body?.goals })));
+  }
   r.use('/api', api);
   return r;
 }
@@ -299,7 +402,11 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0 } legend { padding: 0;
 .dir { margin: 6px 0; display: grid; gap: 2px } .dir dt { color: var(--muted); font-size: 12.5px } .dir dd { margin: 0 0 4px }
 .work { font-size: 13.5px; margin: 8px 0 4px } .rebut { font-size: 13px; margin: 2px 0 6px; padding-left: 8px; border-left: 3px solid var(--line) } .rebut span { color: var(--muted) }
 .secs { display: flex; flex-wrap: wrap; gap: 4px 14px } .secs legend { width: 100%; margin-bottom: 4px; font-weight: 400; color: var(--muted); font-size: 13.5px }
-.ck { display: inline-flex; gap: 6px; align-items: center; min-height: 32px } .ck input { width: 18px; min-height: 18px; height: 18px }
+.ck { display: inline-flex; gap: 6px; align-items: center; min-height: 32px } .ck input { width: 18px; min-height: 18px; height: 18px; flex: none }
+.q { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line) } .q:first-child { border-top: 0; padding-top: 0 } .q label b { font-weight: 600 }
+.q .secs { display: grid; gap: 2px } .refs { display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle } .qa { margin: 0 0 12px }
+.ans { margin: 0; display: grid; gap: 6px } .ans dt { color: var(--muted); font-size: 13px } .ans dd { margin: 0 0 4px; overflow-wrap: anywhere }
+h2 small { font-weight: 400; color: var(--muted); font-size: 13px }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
 @media (max-width: 520px) { .scale { gap: 2px } .scale label { font-size: 11.5px; padding: 6px 0; word-break: keep-all } .item { padding: 10px } .trait { grid-template-columns: 6.5em 1fr 3.2em } }`;
 
