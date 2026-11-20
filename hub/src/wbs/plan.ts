@@ -38,6 +38,7 @@ export const PlanItemInput = z.object({
   status: z.enum(STATUSES).optional(),
   start: date.optional(), due: date.optional(),
   intent: z.string().regex(/^(i\d+)?$/).optional().describe('The team intent it serves (an id from the intents); "" clears; children inherit their parent\'s'),
+  accountable: z.string().regex(/^([A-Za-z0-9_-]{3,128})?$/).optional().describe('A: the one owner or member (account id) who approves agents\' proposals for this item; "" clears; unset → the parent\'s, else the team owner'),
 });
 export const MAX_INTENTS = 5;
 export const IntentInput = z.object({
@@ -92,6 +93,14 @@ function project(uid: string, row: Row, link: PlanLink): SharedWork {
   const fields: SharedWork['fields'] = {};
   for (const f of link.share) fields[f] = f === 'title' ? titleOf(row.task) : f === 'links' ? linksOf(row) : row[f];
   return { id: workId(uid, row.year, row.code), uid, plan: link.plan, fields, at: Date.now() };
+}
+
+/** The accountable person (A, 4.5) for a plan item or a new one under a parent: its own, else its nearest parent's;
+ *  null when none is set (the owner then decides). */
+export function accountableFor(items: PlanItem[], year: string, code: string): string | null {
+  const byKey = new Map(items.map(p => [planKey(p.year, p.code), p]));
+  for (const c of [code, ...ancestorsOf(code).reverse()]) { const a = byKey.get(planKey(year, c))?.accountable; if (a) return a; }
+  return null;
 }
 
 /** The intent a plan item serves: its own, else its nearest parent's (within the same plan year); '' for none. */
@@ -267,12 +276,27 @@ export class Plans {
    *  (the batch is applied in code order), prerequisites name items of the same plan year, and codes never go away. */
   async put(caller: Caller, space: string, raw: z.input<typeof PlanPutInput>) {
     await this.spaces.enter(caller, space, 'plan.write');
-    const input = PlanPutInput.parse(raw), who = callerUid(caller)!, now = Date.now(), thisYear = todayKst().slice(0, 4);
+    const input = PlanPutInput.parse(raw), who = callerUid(caller)!;
     const via = caller.kind === 'agent' ? { via: caller.client } : {};   // who recorded it: the person, and the agent acting for them
     const intents = input.intents?.length ? await this.writeIntents(space, input.intents, who) : undefined;
+    const { preview: _p, ...out } = await this.writeItems(space, input.items ?? [], who, via, input.memo, false);
+    return { ...out, intents };
+  }
+
+  /** What a list of item changes would do, checked exactly as a write is, without writing anything (the team master
+   *  agent's proposals, 4.5): each item created or changed and the changes in the plan log's own words. */
+  async preview(space: string, items: z.input<typeof PlanItemInput>[]) {
+    const r = await this.writeItems(space, z.array(PlanItemInput).max(20).parse(items), '', {}, undefined, true);
+    if (!r.preview.length) throw new LedgerError('invalid', 'These changes would change nothing in the plan');
+    return r.preview;
+  }
+
+  private async writeItems(space: string, items: z.infer<typeof PlanItemInput>[], who: string, via: { via?: string }, memo: string | undefined, dryRun: boolean) {
+    const now = Date.now(), thisYear = todayKst().slice(0, 4);
     const live = new Set((await this.store.intents(space)).filter(i => i.status === 'active').map(i => i.id));
-    const batch = (input.items ?? []).map(it => ({ ...it, year: it.year || thisYear })).sort(byCode);
-    if (!batch.length) return { space, created: [] as string[], changed: [] as string[], unchanged: 0, intents };
+    const batch = items.map(it => ({ ...it, year: it.year || thisYear })).sort(byCode);
+    const preview: { year: string; code: string; created: boolean; changes: string[] }[] = [];
+    if (!batch.length) return { space, created: [] as string[], changed: [] as string[], unchanged: 0, preview };
     const seen = new Set<string>();
     for (const it of batch) { const k = planKey(it.year, it.code); if (seen.has(k)) throw new LedgerError('invalid', `Plan item ${it.year} ${it.code} appears twice`); seen.add(k); }
     return this.store.planTx(space, async cur => {
@@ -296,17 +320,24 @@ export class Plans {
         set('status', it.status); set('start', it.start); set('due', it.due);
         if (it.intent && !live.has(it.intent)) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code}: intent ${it.intent} is not an active intent`);
         if (it.intent !== undefined && (p.intent ?? '') !== it.intent) { changes.push(`의도 ${p.intent || '없음'} → ${it.intent || '없음'}`); p.intent = it.intent; }
+        if (it.accountable !== undefined && (p.accountable ?? '') !== it.accountable) {
+          const m = it.accountable ? await this.store.membership(space, it.accountable) : null;
+          if (it.accountable && (!m || m.role === 'guest')) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code}: A must be an owner or member of this team`);
+          changes.push(`A ${p.accountable || '없음'} → ${it.accountable || '없음'}`); p.accountable = it.accountable || undefined;
+          if (!p.accountable) delete p.accountable;
+        }
         if (p.start && p.due && p.due < p.start) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code}: due is before start`);
         if (p.depends_on.includes(p.code)) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code} cannot depend on itself`);
         if (old && !changes.length) continue;
+        preview.push({ year: p.year, code: p.code, created: !old, changes: old ? changes : [`생성: ${p.scope}`, ...changes.filter(c => !['scope', 'deliverable', 'done'].includes(c))] });
         p.updated = now; p.by = who;
-        p.log = [...p.log, { at: now, by: who, ...via, change: (old ? changes.join(', ') : '생성') + (input.memo ? ` — ${input.memo}` : '') }].slice(-LOG_KEEP);
+        p.log = [...p.log, { at: now, by: who, ...via, change: (old ? changes.join(', ') : '생성') + (memo ? ` — ${memo}` : '') }].slice(-LOG_KEEP);
         all.set(k, p); put.push(p); (old ? changed : created).push(`${p.year} ${p.code}`);
       }
       for (const p of put) for (const d of p.depends_on) {
         if (!all.has(planKey(p.year, d))) throw new LedgerError('invalid', `Plan item ${p.year} ${p.code} depends on ${d}, which is not in the plan`);
       }
-      return { put, out: { space, created, changed, unchanged: batch.length - created.length - changed.length, intents } };
+      return { put: dryRun ? [] : put, out: { space, created, changed, unchanged: batch.length - created.length - changed.length, preview } };
     });
   }
 

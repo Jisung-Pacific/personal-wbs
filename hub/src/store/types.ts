@@ -32,6 +32,8 @@ export interface PlanItem {
   updated: number; by: string; log: { at: number; by: string; via?: string; change: string }[];
   /** The team intent the item serves (execution WBS 4.1); an item without one inherits its nearest parent's. */
   intent?: string;
+  /** A (4.5): the one person who approves agents' proposals for this item; unset → the nearest parent's, else the owner. */
+  accountable?: string;
 }
 /** The five Mini-IPIP traits (Donnellan et al., 2006): Extraversion, Agreeableness, Conscientiousness, Neuroticism,
  *  Intellect/Imagination; each a sum of four items, 4–20. */
@@ -64,6 +66,23 @@ export interface WeeklyBrief {
   intents: { lines: string[]; items: { id: string; rank: number; why: string; flags: string[]; share: number }[]; active: number; off_intent_rows: number; unanchored: number };
   next: { code: string; scope: string; due: string }[];
   lines: string[];
+}
+
+/** The team master agent (execution WBS 4.5): an agent the team's owner delegates through the team's agent address.
+ *  It reads the team summary only and proposes; people approve. `family`: its OAuth grant, revoked when it is stopped. */
+export interface Delegation { client_id: string; client_name: string; by: string; at: number; active: boolean; family?: string; last?: number; stopped?: { by: string; at: number } }
+/** A plan change the team master agent proposes, in the plan's own input shape, with its reason and the accountable
+ *  people (A) who must approve it; applied once they all approve. `base`: each touched item's `updated` when proposed. */
+export interface Proposal {
+  id: string; items: Record<string, unknown>[]; why: string; refs: string[]; client: string; client_id: string; at: number;
+  preview: { year: string; code: string; created: boolean; changes: string[] }[];
+  approvers: string[]; decisions: Record<string, { approve: boolean; at: number; note: string }>; base: Record<string, number>;
+  status: 'open' | 'applied' | 'declined' | 'withdrawn' | 'stale'; closed?: number; note?: string;
+}
+/** The weekly report the team master agent drafts for an ended ISO week; the owner approves it before the team sees it. */
+export interface WeeklyReport {
+  week: string; text: string; recommendations: { text: string; refs: string[] }[]; client: string; client_id: string; at: number;
+  status: 'proposed' | 'approved' | 'declined' | 'withdrawn'; decided?: { by: string; at: number; note: string };
 }
 
 /** One of a team's intents (execution WBS 4.1; the charter's 의도 정렬: why, what, how), at most five in force, ranked.
@@ -237,6 +256,15 @@ export interface Store {
   putWeekly(id: string, b: WeeklyBrief): Promise<void>;
   weeklies(id: string): Promise<string[]>;
   removeWeekly(id: string, week: string): Promise<void>;
+  /** The team master agent (4.5): delegations by client, plan proposals (decided one at a time), weekly report drafts. */
+  delegations(id: string): Promise<Delegation[]>;
+  putDelegation(id: string, d: Delegation): Promise<void>;
+  proposals(id: string): Promise<Proposal[]>;
+  putProposal(id: string, p: Proposal): Promise<void>;
+  proposalTx<T>(id: string, pid: string, fn: (p: Proposal | null) => Promise<{ put?: Proposal; out: T }>): Promise<T>;
+  reports(id: string): Promise<WeeklyReport[]>;
+  report(id: string, week: string): Promise<WeeklyReport | null>;
+  putReport(id: string, r: WeeklyReport): Promise<void>;
   /** A team space's intents (4.1), and the same read-and-write-atomically pattern as the plan. */
   intents(id: string): Promise<Intent[]>;
   intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T>;

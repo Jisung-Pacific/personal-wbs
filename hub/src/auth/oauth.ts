@@ -26,7 +26,15 @@ export const teamOf = (cfg: Config, resource: string) => {
   const m = TEAM_MCP_PATH.exec(resource.slice(cfg.publicUrl.length));
   return m ? m[1] : null;
 };
-export const isResource = (cfg: Config, resource: string) => resourcesOf(cfg).includes(resource) || teamOf(cfg, resource) !== null;
+/** A team space's agent address (execution WBS 4.5): only the team's owner can approve a connection to it, and the agent
+ *  connected through it is the team's delegated master agent — it acts for the team, never as the person who delegated it. */
+export const TEAM_AGENT_PATH = /^\/mcp\/t\/(s_[A-Za-z0-9_-]{22})\/agent$/;
+export const teamAgentOf = (cfg: Config, resource: string) => {
+  if (!resource.startsWith(cfg.publicUrl + '/')) return null;
+  const m = TEAM_AGENT_PATH.exec(resource.slice(cfg.publicUrl.length));
+  return m ? m[1] : null;
+};
+export const isResource = (cfg: Config, resource: string) => resourcesOf(cfg).includes(resource) || teamOf(cfg, resource) !== null || teamAgentOf(cfg, resource) !== null;
 
 export function serverMetadata(cfg: Config) {
   const u = cfg.publicUrl;
@@ -182,6 +190,14 @@ export function oauthRouter(deps: OAuthDeps): Router {
     try { uid = (await deps.verifyIdToken(String(b.id_token || ''))).uid; } catch { return back({ error: 'access_denied', error_description: 'sign-in could not be verified' }); }
     const team = teamOf(cfg, pending.resource);   // a team's own address: only its owners and members connect it
     if (team) { const m = await store.membership(team, uid); if (!m || m.role === 'guest') return back({ error: 'access_denied', error_description: 'only owners and members of this team space can connect its address' }); }
+    const agentTeam = teamAgentOf(cfg, pending.resource);   // a team's agent address: only its owner delegates the master agent
+    if (agentTeam) {
+      const s = await store.space(agentTeam);
+      if (!s || s.owner !== uid) return back({ error: 'access_denied', error_description: 'only the owner of this team space can delegate its master agent' });
+      const prev = (await store.delegations(agentTeam)).find(d => d.client_id === pending.client_id);
+      if (prev?.family) await store.revokeFamily(prev.family);   // one grant per delegation
+      await store.putDelegation(agentTeam, { client_id: pending.client_id, client_name: pending.client_name, by: uid, at: Date.now(), active: true });
+    }
     if (cfg.host.sessionUrl && deps.joinHost) {   // the connection also makes the person a member of the host product
       if (b.host_ok !== '1') return back({ error: 'access_denied', error_description: 'the host terms were not accepted' });
       const joined = await deps.joinHost(uid, String(b.id_token), { timezone: cleanTimezone(b.tz), locale: cleanLocale(b.lang) });
@@ -207,7 +223,13 @@ export function oauthRouter(deps: OAuthDeps): Router {
       if (c.client_id !== b.client_id || c.redirect_uri !== b.redirect_uri) return oauthError(res, 400, 'invalid_grant', 'client or redirect_uri mismatch');
       if (c.code_challenge ? !b.code_verifier || !pkceOk(b.code_verifier, c.code_challenge) : !client?.secret_hash) return oauthError(res, 400, 'invalid_grant', 'PKCE verification failed');
       if (b.resource && b.resource.replace(/\/$/, '') !== c.resource) return oauthError(res, 400, 'invalid_target', 'resource differs from the authorization');
-      return res.set('Cache-Control', 'no-store').json(await issue(c.uid, c.client_id, c.client_name, c.scope, c.resource, random(12)));
+      const agentTeam = teamAgentOf(cfg, c.resource), family = random(12);
+      if (agentTeam) {   // the delegation this code came from must still be live; the grant is bound to it
+        const d = (await store.delegations(agentTeam)).find(x => x.client_id === c.client_id && x.active);
+        if (!d) return oauthError(res, 400, 'invalid_grant', 'the delegation was stopped');
+        await store.putDelegation(agentTeam, { ...d, family });
+      }
+      return res.set('Cache-Control', 'no-store').json(await issue(c.uid, c.client_id, c.client_name, c.scope, c.resource, family));
     }
     if (b.grant_type === 'refresh_token') {
       const rec = b.refresh_token ? await store.useRefresh(sha256(b.refresh_token)) : null;
@@ -216,7 +238,11 @@ export function oauthRouter(deps: OAuthDeps): Router {
       if (rec.client_id !== b.client_id) return oauthError(res, 400, 'invalid_grant', 'client mismatch');
       const scope = b.scope ? b.scope.split(' ').filter(s => rec.scope.split(' ').includes(s)).join(' ') : rec.scope;   // may narrow, never widen
       const resource = b.resource ? b.resource.replace(/\/$/, '') : rec.resource;
-      if (!isResource(cfg, resource) || teamOf(cfg, resource) !== teamOf(cfg, rec.resource)) return oauthError(res, 400, 'invalid_target');   // a grant keeps its team
+      if (!isResource(cfg, resource) || teamOf(cfg, resource) !== teamOf(cfg, rec.resource) || teamAgentOf(cfg, resource) !== teamAgentOf(cfg, rec.resource)) return oauthError(res, 400, 'invalid_target');   // a grant keeps its team and its kind
+      const agentTeam = teamAgentOf(cfg, rec.resource);
+      if (agentTeam && !(await store.delegations(agentTeam)).some(d => d.client_id === rec.client_id && d.active && d.family === rec.family)) {
+        await store.revokeFamily(rec.family); return oauthError(res, 400, 'invalid_grant', 'the delegation was stopped');
+      }
       return res.set('Cache-Control', 'no-store').json(await issue(rec.uid, rec.client_id, rec.client_name, scope || rec.scope, resource, rec.family));
     }
     return oauthError(res, 400, 'unsupported_grant_type');

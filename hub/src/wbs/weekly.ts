@@ -139,13 +139,19 @@ export class Briefs {
   async weekly(caller: Caller, space: string, week?: string) {
     await this.spaces.enter(caller, space, 'brief.read');
     const today = this.today(), w = week ? weekRange(week) : lastFullWeek(today);
-    if (w.to >= today) return { space, live: true, ...(await this.build(space, w, today)) };
-    const kept = await this.store.weekly(space, w.week);
-    if (kept) return { space, ...kept };
+    if (w.to >= today) return { space, live: true, ...(await this.build(space, w, today)), report: null };
+    const report = await this.report(space, w.week), kept = await this.store.weekly(space, w.week);
+    if (kept) return { space, ...kept, report };
     if (w.week !== lastFullWeek(today).week) throw new LedgerError('not_found', `No brief was generated for ${w.week}`);
     const b = await this.build(space, w, today);
     await this.store.putWeekly(space, b);
-    return { space, ...b };
+    return { space, ...b, report };
+  }
+
+  /** The week's report as the team reads it: written by the team master agent and approved by the owner (4.5), or none. */
+  private async report(space: string, week: string) {
+    const r = await this.store.report(space, week);
+    return r?.status === 'approved' ? { text: r.text, recommendations: r.recommendations, by_agent: r.client, approved: ymd(r.decided!.at + 9 * 3600e3) } : null;
   }
 
   /** The scheduler's weekly run: last week's brief for every team that has none yet, and weeks older than half a year

@@ -58,7 +58,8 @@ export function consentPage({ cfg, pending, nonce }: { cfg: Config; pending: Aut
 <p class="sub">이 앱이 ${esc(cfg.brand)} 계정의 다음 권한을 요청합니다.</p>
 <ul>${scopes}</ul>
 <p class="host">돌아갈 곳: ${esc(host)}</p>
-${/\/mcp\/t\/s_/.test(pending.resource) ? `<div class="join"><p><b>팀 환경 연결입니다.</b> 이 주소는 팀 공간 하나를 가리킵니다. 이 연결로 기록한 일은 내 원장에 쌓이고, 맞는 팀 계획 항목에 연결되면 팀에는 헌장의 기본 필드(제목·상태·날짜·링크)만 보입니다. 내 개인 원장의 다른 행은 이 연결에서 읽히지 않습니다. 팀의 소유자와 멤버만 연결할 수 있습니다.</p></div>` : ''}
+${/\/mcp\/t\/s_[^/]+\/agent$/.test(pending.resource) ? `<div class="join"><p><b>팀 마스터 에이전트 위임입니다.</b> 이 에이전트는 사람이 아니라 팀을 대신해 움직입니다. 팀 요약본(이름 없는 계획 대비 실적, 의도 정렬 수치, 주간 브리핑, 헌장)만 읽고, 누구의 개인 원장·카드·열람 기록도 읽지 못합니다. 계획 변경과 주간 보고는 제안만 하고, 계획은 각 항목의 책임자(A, 없으면 소유자)가, 주간 보고는 소유자가 허브에서 승인해야 반영됩니다. 팀 소유자만 위임할 수 있고, 허브의 팀 페이지에서 언제든 중단할 수 있습니다.</p></div>` : ''}
+${/\/mcp\/t\/s_[^/]+$/.test(pending.resource) ? `<div class="join"><p><b>팀 환경 연결입니다.</b> 이 주소는 팀 공간 하나를 가리킵니다. 이 연결로 기록한 일은 내 원장에 쌓이고, 맞는 팀 계획 항목에 연결되면 팀에는 헌장의 기본 필드(제목·상태·날짜·링크)만 보입니다. 내 개인 원장의 다른 행은 이 연결에서 읽히지 않습니다. 팀의 소유자와 멤버만 연결할 수 있습니다.</p></div>` : ''}
 ${join ? `<div class="join"><p>허용하면 ${esc(hn)} 계정으로 로그인되고, 처음이면 이 단계에서 ${esc(hn)} 회원으로 가입됩니다.</p>
 <label><input type="checkbox" id="agree"> <span>${esc(hn)} ${links || '이용약관과 개인정보처리방침'}에 동의합니다.</span></label></div>` : ''}
 <form id="f" method="post" action="/oauth/approve"><input type="hidden" name="req" value="${esc(pending.id)}"><input type="hidden" name="id_token" id="tok"><input type="hidden" name="decision" id="dec" value="deny">

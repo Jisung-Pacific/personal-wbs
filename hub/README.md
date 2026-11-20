@@ -12,6 +12,7 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 | --- | --- |
 | `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, `wbs_charter`, `wbs_plan`, `wbs_shared`, `wbs_views`, `wbs_team`, `wbs_weekly`, `wbs_coach`, and with `wbs.write` also `wbs_add`, `wbs_update`, `wbs_plan_put`, `wbs_share`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
 | `/mcp/t/<space id>` | The same MCP server as one team space's environment (team defaults, work linked to its plan, no personal reads). |
+| `/mcp/t/<space id>/agent` | The team's master agent: delegated by the owner, reads the team summary, proposes plan changes and the weekly report. |
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
@@ -90,6 +91,23 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   in person (agents neither fill, publish nor read cards); the team's delegated agent may read them. Nothing ranks,
   averages or totals people, and cards feed nothing else in the hub. A team with employees switches on employee mode,
   which removes every card; leaving a team takes one's card off it; reading others' cards is noted in their view logs.
+- **Team master agent** (execution WBS 4.5): the owner delegates an agent through the team's agent address,
+  `/mcp/t/<space id>/agent` — only the owner can approve that connection, and the token is bound to it (no other token
+  opens the address, and its token opens nothing else). The agent acts as the team's delegate, never as the owner, with
+  a server of its own: `wbs_team`, `wbs_weekly`, `wbs_plan`, `wbs_charter` (the team summary — plan against actual work
+  without names, intents in counts, the brief, the charter; no one's ledger, cards or view logs), `wbs_proposals`, and
+  with `wbs.write` `wbs_propose`. It changes nothing itself. A plan change is a proposal, checked as a write would be and
+  applied — as the last approver's own write, logged with the proposal — once the accountable person (A) of every item
+  it touches approves: the item's own A (`accountable` in `wbs_plan_put`, set by people only), else its nearest
+  parent's, else the owner; one decline closes it, and a plan that moved meanwhile makes it stale. The weekly report it
+  drafts for an ended week names no one (a member's account id or name is refused) and reaches the team beside the
+  brief only once the owner approves it; scheduled after Monday's brief, nobody writes the weekly report by hand.
+  Approving is a person's own act on the hub's page `/app/t/<space id>/agent`. The owner stops a delegation at any
+  moment on the team page: its grant is revoked, its very next call is refused and its open proposals are withdrawn.
+  Every proposal and report carries the agent that wrote it and the person who decided (Shavit et al., 2023,
+  *Practices for Governing Agentic AI Systems*, OpenAI; Chan et al., 2024, *Visibility into AI Agents*, FAccT); the
+  agent recommends and never assigns or rates people (Kellogg, Valentine & Christin, 2020, *Academy of Management
+  Annals* 14(1), 366–410).
 - **View log**: who read a person's shared rows is noted in that person's own space (the charter: views are visible to
   the one viewed) — the reader's account and role, the agent it read through or the team's own agent, the space, how
   many of the person's rows one read carried, and when (first and last time each day, how often). Only the person reads

@@ -3,6 +3,7 @@
 import {
   spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type WeeklyBrief, type InboxItem, type LedgerEvent, type LedgerTx, type Membership, type OAuthClient,
   type Intent, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type Store, type ViewEntry,
+  type Delegation, type Proposal, type WeeklyReport,
 } from './types.js';
 
 /** The key a view log merges on, and the merge itself (shared with the Firestore store). */
@@ -139,7 +140,7 @@ export class MemoryStore implements Store {
   }
   async deleteSpace(id: string) {
     this.spaces.delete(id); this.crew.delete(id); this.charterOf.delete(id); this.planOf.delete(id); this.sharedOf.delete(id); this.intentOf.delete(id);
-    this.cardOf.delete(id); this.noCards.delete(id); this.weeklyOf.delete(id); this.dropOwner(spaceOwner(id));
+    this.cardOf.delete(id); this.noCards.delete(id); this.weeklyOf.delete(id); this.agentOf.delete(id); this.dropOwner(spaceOwner(id));
   }
 
   // the team plan, people's links to it and the shared fields a space holds
@@ -176,6 +177,27 @@ export class MemoryStore implements Store {
   async putWeekly(id: string, b: WeeklyBrief) { let m = this.weeklyOf.get(id); if (!m) { m = new Map(); this.weeklyOf.set(id, m); } m.set(b.week, structuredClone(b)); }
   async weeklies(id: string) { return [...(this.weeklyOf.get(id)?.keys() ?? [])].sort(); }
   async removeWeekly(id: string, week: string) { this.weeklyOf.get(id)?.delete(week); }
+  // the team master agent (4.5): per space, delegations by client, proposals by id, reports by week
+  private agentOf = new Map<string, { del: Map<string, Delegation>; props: Map<string, Proposal>; reps: Map<string, WeeklyReport> }>();
+  private agentData(id: string) { let a = this.agentOf.get(id); if (!a) { a = { del: new Map(), props: new Map(), reps: new Map() }; this.agentOf.set(id, a); } return a; }
+  async delegations(id: string) { return [...(this.agentOf.get(id)?.del.values() ?? [])].map(d => structuredClone(d)); }
+  async putDelegation(id: string, d: Delegation) { this.agentData(id).del.set(d.client_id, structuredClone(d)); }
+  async proposals(id: string) { return [...(this.agentOf.get(id)?.props.values() ?? [])].map(p => structuredClone(p)).sort((a, b) => a.at - b.at); }
+  async putProposal(id: string, p: Proposal) { this.agentData(id).props.set(p.id, structuredClone(p)); }
+  async proposalTx<T>(id: string, pid: string, fn: (p: Proposal | null) => Promise<{ put?: Proposal; out: T }>): Promise<T> {
+    const lock = 'proposal|' + id + '|' + pid, prev = this.locks.get(lock) || Promise.resolve();
+    const run = prev.then(async () => {
+      const cur = this.agentOf.get(id)?.props.get(pid);
+      const { put, out } = await fn(cur ? structuredClone(cur) : null);
+      if (put) this.agentData(id).props.set(put.id, structuredClone(put));
+      return out;
+    });
+    this.locks.set(lock, run.catch(() => undefined));
+    return run;
+  }
+  async reports(id: string) { return [...(this.agentOf.get(id)?.reps.values() ?? [])].map(r => structuredClone(r)).sort((a, b) => a.week.localeCompare(b.week)); }
+  async report(id: string, week: string) { const r = this.agentOf.get(id)?.reps.get(week); return r ? structuredClone(r) : null; }
+  async putReport(id: string, r: WeeklyReport) { this.agentData(id).reps.set(r.week, structuredClone(r)); }
   private cardOf = new Map<string, Map<string, Card>>();
   private noCards = new Set<string>();
   async cards(id: string) { return [...(this.cardOf.get(id)?.values() ?? [])].map(c => structuredClone(c)); }

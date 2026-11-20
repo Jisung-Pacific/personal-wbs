@@ -27,7 +27,7 @@ import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-ad
 import {
   isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type WeeklyBrief, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
   type Intent, type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
-  type ViewEntry,
+  type ViewEntry, type Delegation, type Proposal, type WeeklyReport,
 } from './types.js';
 import { matches, mergeViews } from './memory.js';
 import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from '../crypto/envelope.js';
@@ -323,6 +323,38 @@ export class FirestoreStore implements Store {
   async putWeekly(id: string, b: WeeklyBrief) { await this.weeklyCol(id).doc(b.week).set({ enc: await this.envelope.seal(spaceOwner(id), `weekly/${b.week}`, b) }); }
   async weeklies(id: string) { return (await this.weeklyCol(id).select().get()).docs.map(d => d.id).sort(); }
   async removeWeekly(id: string, week: string) { await this.weeklyCol(id).doc(week).delete(); }
+
+  // the team master agent (4.5): spaces/{id}/delegations/{sha256(client_id)} (plain: who delegated which client, when,
+  // and its grant), proposals/{pid} and reports/{YYYY-Www} sealed under the space's key
+  private delegationCol(id: string) { return this.spaceDoc(id).collection('delegations'); }
+  async delegations(id: string) { return (await this.delegationCol(id).get()).docs.map(d => d.data() as Delegation); }
+  async putDelegation(id: string, d: Delegation) { await this.delegationCol(id).doc(createHash('sha256').update(d.client_id).digest('hex')).set(JSON.parse(JSON.stringify(d))); }
+  private proposalCol(id: string) { return this.spaceDoc(id).collection('proposals'); }
+  async proposals(id: string) {
+    const s = await this.proposalCol(id).get();
+    return (await Promise.all(s.docs.map(d => this.envelope.open<Proposal>(spaceOwner(id), `proposals/${d.id}`, d.get('enc') as Sealed)))).sort((a, b) => a.at - b.at);
+  }
+  async putProposal(id: string, p: Proposal) { await this.proposalCol(id).doc(p.id).set({ enc: await this.envelope.seal(spaceOwner(id), `proposals/${p.id}`, p) }); }
+  async proposalTx<T>(id: string, pid: string, fn: (p: Proposal | null) => Promise<{ put?: Proposal; out: T }>): Promise<T> {
+    await this.envelope.dek(spaceOwner(id));
+    const ref = this.proposalCol(id).doc(pid);
+    return this.db.runTransaction(async t => {
+      const d = await t.get(ref);
+      const { put, out } = await fn(d.exists ? await this.envelope.open<Proposal>(spaceOwner(id), `proposals/${pid}`, d.get('enc') as Sealed) : null);
+      if (put) t.set(ref, { enc: await this.envelope.seal(spaceOwner(id), `proposals/${put.id}`, put) });
+      return out;
+    });
+  }
+  private reportCol(id: string) { return this.spaceDoc(id).collection('reports'); }
+  async reports(id: string) {
+    const s = await this.reportCol(id).get();
+    return (await Promise.all(s.docs.map(d => this.envelope.open<WeeklyReport>(spaceOwner(id), `reports/${d.id}`, d.get('enc') as Sealed)))).sort((a, b) => a.week.localeCompare(b.week));
+  }
+  async report(id: string, week: string) {
+    const d = await this.reportCol(id).doc(week).get();
+    return d.exists ? await this.envelope.open<WeeklyReport>(spaceOwner(id), `reports/${week}`, d.get('enc') as Sealed) : null;
+  }
+  async putReport(id: string, r: WeeklyReport) { await this.reportCol(id).doc(r.week).set({ enc: await this.envelope.seal(spaceOwner(id), `reports/${r.week}`, r) }); }
 
   // cards (4.2): spaces/{id}/cards/{uid}, sealed under the space's key; employee mode is a plain flag on the space
   private cardsCol(id: string) { return this.spaceDoc(id).collection('cards'); }

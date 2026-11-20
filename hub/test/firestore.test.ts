@@ -88,6 +88,16 @@ test('Firestore store: the team plan, intents, cards, weekly briefs, links and s
   assert.deepEqual(await store.weeklies(s.id), ['2026-W45', '2026-W46']);
   assert.ok((await store.teamSpaceIds()).includes(s.id));
   await store.removeWeekly(s.id, '2026-W45'); assert.deepEqual(await store.weeklies(s.id), ['2026-W46']);
+  // the team master agent (4.5): a delegation per client (a URL client id too), proposals decided in a transaction, reports by week
+  await store.putDelegation(s.id, { client_id: 'https://claude.ai/oauth/mcp-oauth-client-metadata', client_name: 'Claude', by: a, at: 1, active: true, family: 'f1' });
+  assert.deepEqual((await store.delegations(s.id)).map(d => [d.client_name, d.active, d.family]), [['Claude', true, 'f1']]);
+  const prop = { id: 'p_1', items: [{ code: '1', status: '완료' }], why: '하위가 모두 끝남', refs: [], client: 'Claude', client_id: 'c', at: 1,
+    preview: [{ year: '2026', code: '1', created: false, changes: ['상태 진행 중 → 완료'] }], approvers: [a], decisions: {}, base: { '2026:1': 1 }, status: 'open' as const };
+  await store.putProposal(s.id, prop);
+  assert.equal(await store.proposalTx(s.id, 'p_1', async p => ({ put: { ...p!, status: 'declined' as const }, out: p!.status })), 'open');
+  assert.equal((await store.proposals(s.id))[0].status, 'declined');
+  await store.putReport(s.id, { week: '2026-W46', text: '지난주 결제 연동이 끝났다.', recommendations: [], client: 'Claude', client_id: 'c', at: 1, status: 'proposed' });
+  assert.equal((await store.report(s.id, '2026-W46'))!.status, 'proposed'); assert.equal((await store.reports(s.id)).length, 1);
   await spaces.removeMember(person(b), s.id, b);
   assert.ok((await store.shared(s.id))[0].frozen, 'the copy stays with the team, frozen');
   await spaces.remove(person(a), s.id);

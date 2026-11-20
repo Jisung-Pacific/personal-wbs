@@ -16,6 +16,7 @@ import { person, type Caller } from './wbs/access.js';
 import { LedgerError } from './wbs/service.js';
 import type { Spaces } from './wbs/spaces.js';
 import { Cards, DEFAULT_SECTIONS, INSTRUCTIONS, MINI_IPIP, SCALE, TRAIT_KO } from './wbs/cards.js';
+import type { MasterAgent } from './wbs/master.js';
 
 const FIREBASE_SDK = '12.19.0';   // the same pinned compat builds as the consent page
 const SESSION_TTL = 8 * 3600;
@@ -24,10 +25,10 @@ const js = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 const ymd = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);   // KST, like the ledger
 const SECTION_KO: Record<CardSection, string> = { ...TRAIT_KO, direction: '방향성' };
 
-export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards }
+export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards; master?: MasterAgent }
 type Signed = Request & { uid?: string };
 
-export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards }: PeopleDeps): Router {
+export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master }: PeopleDeps): Router {
   const r = express.Router(), secure = cfg.publicUrl.startsWith('https://'), COOKIE = secure ? '__Host-ppwbs' : 'ppwbs', origin = new URL(cfg.publicUrl).origin;
   const cookieOf = (req: Request) => (req.get('cookie') || '').split(/;\s*/).map(c => c.split('=')).find(([k]) => k === COOKIE)?.[1];
   const setCookie = (res: Response, v: string, age: number) => res.append('Set-Cookie', `${COOKIE}=${v}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`);
@@ -178,9 +179,27 @@ ${deck.mine ? (deck.cards.length ? `<div class="grid">${(deck.cards as CardView[
 ${owner ? `<details><summary>직원 모드</summary><p class="note">직원이 있는 팀은 동의가 자유롭지 않아 카드를 끕니다. 켜면 이 팀의 카드가 모두 지워집니다.</p>
 <p><button class="btn" id="emp" data-on="${deck?.employee_mode ? '0' : '1'}" type="button">${deck?.employee_mode ? '직원 모드 끄기' : '직원 모드 켜기'}</button></p></details>` : ''}
 </section>`;
+    // the team master agent (4.5): who acts for the team, how the owner delegates and stops it, what waits for a decision
+    let agentHtml = '';
+    if (me.role !== 'guest' && master && !gate) {
+      try {
+        const [dels, sum] = await Promise.all([master.delegations(who, id), master.summary(who, id)]);
+        const live = dels.filter(d => d.active), waiting = sum && 'to_decide' in sum ? (sum.to_decide ?? 0) + (sum.drafts ?? 0) : 0;
+        const byName = new Map(await Promise.all([...new Set(live.map(d => d.by))].map(async u => [u, await nameOf(u)] as const)));
+        const addr = `${cfg.publicUrl}/mcp/t/${id}/agent`;
+        agentHtml = `<section class="box"><h2>팀 마스터 에이전트</h2>
+<p class="note">팀을 대신해 팀 요약본(이름 없는 계획 대비 실적, 의도 정렬 수치, 주간 브리핑, 헌장)만 읽고, 계획 변경과 주간 보고를 제안합니다. 반영은 사람이 승인해야 합니다. 누구의 개인 원장·카드·열람 기록도 읽지 못합니다.</p>
+${live.length ? `<ul class="rows">${live.map(d => `<li><b>${esc(d.client_name)}</b> <span class="note">${esc(d.since)}부터 · ${esc(byName.get(d.by) ?? '')} 위임${d.last ? ` · 마지막 제안 ${esc(d.last)}` : ''}</span>${owner ? ` <button class="link" type="button" data-stop="${esc(d.client_id)}">중단</button>` : ''}</li>`).join('')}</ul>` : '<p>위임된 에이전트가 없습니다.</p>'}
+${owner ? `<details><summary>에이전트 위임하기</summary><p>이 주소로 커넥터를 추가하고, 열리는 동의 화면에서 이 팀의 소유자 계정으로 허용하면 위임됩니다.</p>
+<p class="inline"><code id="agurl">${esc(addr)}</code><button class="btn" id="agcp" type="button">주소 복사</button></p>
+<ol class="lines"><li>Claude: Customize &gt; Connectors &gt; + &gt; Add custom connector &gt; 이름 <code>PP WBS · ${esc(me.name)} 마스터</code> &gt; 이 주소 &gt; Add &gt; Connect</li>
+<li>매주 월요일 브리핑이 나온 뒤 "지난주 주간 보고 초안을 올려 줘"를 예약해 두면, 사람은 여기서 승인만 합니다.</li></ol></details>` : ''}
+<p><a class="btn${waiting ? ' primary' : ''}" href="/app/t/${esc(id)}/agent">${waiting ? `승인할 것 ${waiting}건` : '제안과 주간 보고 보기'}</a></p></section>`;
+      } catch (e) { if (!(e instanceof LedgerError)) throw e; }
+    }
     const guestHtml = me.role === 'guest' ? '<section class="box"><p>게스트로 속한 팀입니다. 배정된 프로젝트의 계획과 작업은 에이전트나 대시보드에서 봅니다.</p></section>' : '';
     page(res, me.name, `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p><h1>${esc(me.name)} <span class="chip">${ROLE[me.role]}</span></h1>
-${guestHtml}${charterHtml}${membersHtml}${cardsHtml}</main>`, `
+${guestHtml}${charterHtml}${membersHtml}${agentHtml}${cardsHtml}</main>`, `
 const S = ${js(id)}, base = '/app/api/t/' + S;
 document.querySelectorAll('[data-consent]').forEach(b => { b.onclick = () => api('POST', base + '/charter/consent', { version: +b.dataset.consent, agree: b.dataset.agree === '1' }).then(reload).catch(err); });
 if ($('pp')) $('pp').onsubmit = e => { e.preventDefault(); api('POST', base + '/charter/propose', { lines: $('pl').value.split('\\n').map(s => s.trim()).filter(Boolean), note: $('pn').value }).then(reload).catch(err); };
@@ -191,7 +210,40 @@ if ($('card')) $('card').onsubmit = e => { e.preventDefault();
   const v = id => ($(id) || {}).value || '', sections = [...document.querySelectorAll('input[name=sec]:checked')].map(x => x.value);
   api('POST', base + '/card', { sections, direction: { role: v('dr'), grow: v('dg'), ask: v('da') }, rebuttal: { traits: v('rt'), work: v('rw'), direction: v('rd') } }).then(reload).catch(err); };
 if ($('wd')) $('wd').onclick = () => api('DELETE', base + '/card').then(reload).catch(err);
+if ($('agcp')) $('agcp').onclick = () => copy($('agurl'), $('agcp'));
+document.querySelectorAll('[data-stop]').forEach(b => { b.onclick = () => { if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 바로 중단합니다'; return; } api('POST', base + '/agent/stop', { client_id: b.dataset.stop }).then(reload).catch(err); }; });
 if ($('emp')) $('emp').onclick = () => { const b = $('emp'); if (b.dataset.on === '1' && b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 카드가 모두 지워집니다'; return; } api('POST', base + '/employee-mode', { on: b.dataset.on === '1' }).then(reload).catch(err); };`);
+  });
+
+  // ---------------------------------------------------------------- the team master agent: approvals (4.5)
+  const gateMsg = (e: unknown) => e instanceof LedgerError ? (/charter/i.test(e.message) ? '헌장에 동의하면 볼 수 있습니다.' : e.message) : null;
+  const STATUS_KO: Record<string, string> = { open: '결정 대기', applied: '반영됨', declined: '반려', stale: '계획이 바뀌어 무효', withdrawn: '철회', proposed: '승인 대기', approved: '승인됨' };
+  r.get('/t/:space/agent', signed(false), async (req: Signed & { params: Record<string, string> }, res) => {
+    const uid = req.uid!, who = person(uid), id = req.params.space, name = await nameOf(uid);
+    const sp0 = (await spaces.list(who)).find(s => s.id === id) as { id: string; name: string; role: string } | undefined;
+    const shell = (body: string, script = '') => page(res, '팀 마스터 에이전트', `${header(uid, name)}<main><p><a href="/app/t/${esc(id)}">← ${esc(sp0?.name ?? '팀')}</a></p><h1>팀 마스터 에이전트 <small>제안과 승인</small></h1>${body}<p class="err" id="err" role="alert"></p></main>`,
+      `const S = ${js(id)}, base = '/app/api/t/' + S;\n${script}`);
+    if (!sp0 || sp0.role === 'guest' || !master) return shell('<section class="box"><p>팀의 소유자와 멤버가 봅니다.</p></section>');
+    let L: Awaited<ReturnType<MasterAgent['list']>>;
+    try { L = await master.list(who, id); } catch (e) { const m = gateMsg(e); if (m === null) throw e; return shell(`<section class="box"><p class="warn">${esc(m)}</p></section>`); }
+    const people = L as Extract<typeof L, { open: unknown }>;
+    const uids = new Set<string>(); people.open.forEach(p => p.approvers.forEach(a => uids.add(a.uid))); people.decided.forEach(p => p.approvers.forEach(a => uids.add(a.uid)));
+    const names = new Map(await Promise.all([...uids].map(async u => [u, await nameOf(u)] as const)));
+    const changes = (p: { preview: { code: string; created: boolean; changes: string[] }[] }) => `<ul class="rows">${p.preview.map(v => `<li><code>${esc(v.code)}</code> ${v.created ? '<span class="chip">새 항목</span> ' : ''}${esc(v.changes.join(', '))}</li>`).join('')}</ul>`;
+    const approvers = (p: { approvers: { uid: string; decided: string | null }[] }) => `<p class="note">결정할 사람: ${p.approvers.map(a => `${esc(names.get(a.uid) ?? a.uid)}(${a.decided === 'approve' ? '승인' : a.decided === 'decline' ? '반려' : '대기'})`).join(', ')}</p>`;
+    const decideForm = (attr: string, v: string) => `<div class="inline"><input data-note-for="${esc(v)}" maxlength="300" aria-label="메모(선택)" placeholder="메모(선택)"><button class="btn primary" type="button" ${attr}="${esc(v)}" data-approve="1">승인</button><button class="btn" type="button" ${attr}="${esc(v)}" data-approve="0">반려</button></div>`;
+    const drafts = people.drafts.length ? `<section class="box"><h2>승인 기다리는 주간 보고</h2>${people.drafts.map(r0 => `<div class="card"><h3>${esc(r0.week)} <span class="chip">${esc(r0.client)} 작성</span></h3>
+<p class="pre">${esc(r0.text)}</p>${r0.recommendations.length ? `<h3>권고</h3><ol class="lines">${r0.recommendations.map(x => `<li>${esc(x.text)}</li>`).join('')}</ol>` : ''}
+<p class="note">승인하면 팀 전체가 주간 브리핑 옆에서 봅니다.</p>${decideForm('data-week', r0.week)}</div>`).join('')}</section>` : '';
+    const open = `<section class="box"><h2>열린 제안</h2>${people.open.length ? people.open.map(p => `<div class="card"><h3>${esc(p.client)} 제안 <span class="note">${esc(p.at)}</span></h3>
+<p>${esc(p.why)}</p>${changes(p)}${approvers(p)}${p.mine_to_decide ? decideForm('data-pid', p.id) : ''}</div>`).join('') : '<p>결정을 기다리는 제안이 없습니다.</p>'}</section>`;
+    const reports = people.reports.length ? `<section class="box"><h2>승인된 주간 보고</h2>${people.reports.map(r0 => `<details><summary>${esc(r0.week)} · ${esc(r0.client)} 작성</summary><p class="pre">${esc(r0.text)}</p>${r0.recommendations.length ? `<ol class="lines">${r0.recommendations.map(x => `<li>${esc(x.text)}</li>`).join('')}</ol>` : ''}</details>`).join('')}</section>` : '';
+    const past = people.decided.length ? `<section class="box"><h2>지난 결정</h2><ul class="rows">${people.decided.map(p => `<li><span class="chip">${STATUS_KO[p.status] ?? esc(p.status)}</span> ${esc(p.preview.map(v => v.code).join(', '))} — ${esc(p.why)}${p.note ? ` <span class="note">${esc(p.note)}</span>` : ''}</li>`).join('')}</ul></section>` : '';
+    shell(`${drafts}${open}${reports}${past}`, `
+document.querySelectorAll('[data-pid]').forEach(b => { b.onclick = () => { const n = document.querySelector('[data-note-for="' + b.dataset.pid + '"]');
+  api('POST', base + '/proposals/' + encodeURIComponent(b.dataset.pid) + '/decide', { approve: b.dataset.approve === '1', note: n ? n.value : '' }).then(reload).catch(err); }; });
+document.querySelectorAll('[data-week]').forEach(b => { b.onclick = () => { const n = document.querySelector('[data-note-for="' + b.dataset.week + '"]');
+  api('POST', base + '/reports/' + encodeURIComponent(b.dataset.week) + '/decide', { approve: b.dataset.approve === '1', note: n ? n.value : '' }).then(reload).catch(err); }; });`);
   });
 
   // ---------------------------------------------------------------- the API the pages call
@@ -212,6 +264,11 @@ if ($('emp')) $('emp').onclick = () => { const b = $('emp'); if (b.dataset.on ==
   api.delete('/t/:space/card', act((who, req) => cards.withdraw(who, sp(req))));
   api.get('/t/:space/cards', act((who, req) => cards.list(who, sp(req))));
   api.post('/t/:space/employee-mode', act((who, req) => cards.setEmployeeMode(who, sp(req), req.body?.on === true)));
+  if (master) {
+    api.post('/t/:space/agent/stop', act((who, req) => master.stop(who, sp(req), String(req.body?.client_id || ''))));
+    api.post('/t/:space/proposals/:pid/decide', act((who, req) => master.decide(who, sp(req), String(req.params.pid), req.body?.approve === true, String(req.body?.note || ''))));
+    api.post('/t/:space/reports/:week/decide', act((who, req) => master.decideReport(who, sp(req), String(req.params.week), req.body?.approve === true, String(req.body?.note || ''))));
+  }
   r.use('/api', api);
   return r;
 }
@@ -300,6 +357,7 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0 } legend { padding: 0;
 .work { font-size: 13.5px; margin: 8px 0 4px } .rebut { font-size: 13px; margin: 2px 0 6px; padding-left: 8px; border-left: 3px solid var(--line) } .rebut span { color: var(--muted) }
 .secs { display: flex; flex-wrap: wrap; gap: 4px 14px } .secs legend { width: 100%; margin-bottom: 4px; font-weight: 400; color: var(--muted); font-size: 13.5px }
 .ck { display: inline-flex; gap: 6px; align-items: center; min-height: 32px } .ck input { width: 18px; min-height: 18px; height: 18px }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere } h2 small { font-weight: 400; color: var(--muted); font-size: 13px } .card + .card { margin-top: 10px }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
 @media (max-width: 520px) { .scale { gap: 2px } .scale label { font-size: 11.5px; padding: 6px 0; word-break: keep-all } .item { padding: 10px } .trait { grid-template-columns: 6.5em 1fr 3.2em } }`;
 

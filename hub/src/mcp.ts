@@ -5,13 +5,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AddInput, Ledger, LedgerError, SearchInput, UpdateInput, type Actor } from './wbs/service.js';
 import { InboxAddInput, InboxListInput, InboxMarkInput, type Inbox } from './wbs/inbox.js';
-import { agent } from './wbs/access.js';
+import { agent, type Caller } from './wbs/access.js';
 import type { Spaces } from './wbs/spaces.js';
 import type { Store } from './store/types.js';
 import { IntentInput, PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
 import { ViewsInput, type Views } from './wbs/views.js';
 import { teamOverview } from './wbs/team.js';
 import type { Briefs } from './wbs/weekly.js';
+import { ProposeInput, ReportInput, type MasterAgent } from './wbs/master.js';
 
 export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every year of their work as atomic rows (one concrete deliverable, decision or event per row, dated from its source), shared by every agent they use.
 - Before adding, search (wbs_search) for the same work; extend an existing task with a dated step (wbs_add with parent) or a status change (wbs_update) instead of a near-duplicate row.
@@ -32,6 +33,14 @@ This connection is a team environment: the team space ${space} (wbs_spaces marks
 - Without space, reading tools (wbs_brief, wbs_search, wbs_get, wbs_packages, wbs_summary, wbs_export, wbs_plan, wbs_team, wbs_charter, wbs_views) work on this team.
 - Record the user's work with wbs_add and change it with wbs_update, without space: the row goes to the user's own ledger and is linked to this team's plan, so the team sees only the charter's default fields (title, status, dates, links). Pass plan (a plan item code from wbs_plan view items) when you know the item. Without it the hub links the item it matches with confidence; otherwise the row waits unlinked (status pending, with suggestions) and nothing reaches the team until you ask the user and call wbs_share with the plan.
 - The user's personal ledger is not readable from this connection; the rows linked to this team are listed by wbs_shared. To record a team-level entry that belongs to no one person, pass space with this team's id.`;
+/** The team master agent's connection (4.5): the team's delegate, reading the team summary and proposing. */
+export const TEAM_AGENT_INSTRUCTIONS = (space: string) => `
+You are the master agent of the team space ${space}, delegated by its owner. You act for the team, not for any person.
+- Read the team summary only: wbs_team (plan against actual work without names, intent alignment in counts, the weekly brief), wbs_weekly, wbs_plan, wbs_charter. You cannot read anyone's ledger, cards or view logs.
+- You recommend; people decide. Change nothing directly: wbs_propose kind "plan" proposes plan item changes with why (the accountable person, A, of each touched item approves on the hub), kind "report" drafts the weekly report for an ended week (the owner approves it before the team sees it). wbs_proposals shows how your proposals and reports were decided.
+- The weekly report is about the work: what moved, what is stuck and why, what is at risk in the next seven days, which intents drift, and what to decide. Never name, rank, rate or compare people, and never assign work to a person.
+- A good rhythm: on Monday after the brief (wbs_weekly) draft the report for last week, and propose at most a few plan changes it calls for.
+- The owner can stop you at any time; then every call is refused.`;
 const ok = (v: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(v) }] });
 const fail = (e: unknown) => {
   if (e instanceof LedgerError) return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: e.code, message: e.message, detail: e.detail }) }] };
@@ -42,9 +51,10 @@ const run = async (f: () => Promise<unknown>) => { try { return ok(await f()); }
 
 /** `env`: the team space when the connection came through that team's own address (3.8); `hubUrl` gives each team its
  *  connector address in wbs_spaces. */
-export interface McpOptions { env?: string; hubUrl?: string; briefs?: Briefs }
+export interface McpOptions { env?: string; hubUrl?: string; briefs?: Briefs; master?: MasterAgent; teamAgent?: { space: string; client: string; clientId: string } }
 
 export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans, views?: Views, ledgerStore?: Store, opts: McpOptions = {}): McpServer {
+  if (opts.teamAgent) return buildTeamAgentMcp(spaces, scopes, version, plans!, views, ledgerStore!, opts);
   const env = opts.env;
   const server = new McpServer({ name: 'ppwbs-hub', title: 'PP WBS Hub', version }, { instructions: INSTRUCTIONS + (env ? TEAM_INSTRUCTIONS(env) : '') });
   const read = scopes.includes('wbs.read'), write = scopes.includes('wbs.write');
@@ -100,7 +110,7 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'Everything a team screen shows, in one call: the space and the user\'s role, the charter in force and any open proposal, the members (owners and members only), the plan against the actual work (as wbs_plan), the user\'s own rows shared there, and who read them in the last 30 days. Use it when the user switches to a team or asks how the team is doing.',
       inputSchema: { space: teamSpace }, annotations: ro,
     }, async a => run(async () => {
-      const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space), opts.briefs);   // its address only for those who may connect it
+      const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space), opts.briefs, opts.master);   // its address only for those who may connect it
       return { ...t, ...(opts.hubUrl && t.space.role !== 'guest' ? { connector_url: `${opts.hubUrl}/mcp/t/${t.space.id}` } : {}) };
     }));
     const briefs = opts.briefs;
@@ -221,5 +231,46 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       }, async a => run(() => inbox.mark(actor.uid, a)));
     }
   }
+  return server;
+}
+
+/** The team master agent's server (4.5): the team summary to read and proposals to make, nothing else. */
+function buildTeamAgentMcp(spaces: Spaces, scopes: string[], version: string, plans: Plans, views: Views | undefined, store: Store, opts: McpOptions): McpServer {
+  const ta = opts.teamAgent!, space = ta.space, master = opts.master!, briefs = opts.briefs;
+  const server = new McpServer({ name: 'ppwbs-hub', title: 'PP WBS Hub · team master agent', version }, { instructions: TEAM_AGENT_INSTRUCTIONS(space) });
+  const caller: Caller = { kind: 'team_agent', space, client: ta.client, clientId: ta.clientId };
+  const ro = { readOnlyHint: true, openWorldHint: false } as const;
+  server.registerTool('wbs_team', {
+    title: 'Read the team summary',
+    description: 'The team as its delegate sees it: the charter in force, the plan against the actual work (counts, no names), intent alignment in counts, last week\'s brief with its approved report, and how your proposals stand.',
+    inputSchema: {}, annotations: ro,
+  }, async () => run(() => teamOverview(store, spaces, plans, views, caller, space, briefs, master)));
+  if (briefs) server.registerTool('wbs_weekly', {
+    title: 'Read the weekly brief',
+    description: 'The team\'s weekly brief (default: the last week that has ended; generated Monday morning): progress, bottlenecks with reasons, shared blockers, risks within seven days, drifting intents, what falls due. The basis for the weekly report you draft.',
+    inputSchema: { week: z.string().regex(/^\d{4}-W\d{2}$/).optional() }, annotations: ro,
+  }, async a => run(() => briefs.weekly(caller, space, a.week)));
+  server.registerTool('wbs_plan', {
+    title: 'Read the team plan',
+    description: 'The plan against the actual work (default), its items with their change log (view items), or the intents against where the work goes (view alignment), without names.',
+    inputSchema: { view: z.enum(['actual', 'items', 'alignment']).optional(), year: z.string().regex(/^\d{4}$/).optional() }, annotations: ro,
+  }, async a => run(() => a.view === 'items' ? plans.list(caller, space, a.year) : a.view === 'alignment' ? plans.align(caller, space) : plans.actual(caller, space, a.year)));
+  server.registerTool('wbs_charter', {
+    title: 'Read the team charter', description: 'The charter in force and any open proposal.', inputSchema: {}, annotations: ro,
+  }, async () => run(() => spaces.charter(caller, space)));
+  server.registerTool('wbs_proposals', {
+    title: 'See how your proposals were decided',
+    description: 'Your plan proposals (open, applied, declined, stale, withdrawn) with the changes each makes and how many people decide it, and your weekly reports with their status and the owner\'s note.',
+    inputSchema: {}, annotations: ro,
+  }, async () => run(() => master.list(caller, space)));
+  if (scopes.includes('wbs.write')) server.registerTool('wbs_propose', {
+    title: 'Propose a plan change or draft the weekly report',
+    description: 'kind "plan": plan item changes or new items (wbs_plan_put\'s item shape, without A) with why; checked now and applied only when the accountable person of every item approves on the hub. kind "report": the weekly report for an ended week (default last week), about the work only — it names no one — with up to five recommendations; the owner approves it before the team sees it, and a new draft replaces an undecided one. You change nothing directly.',
+    inputSchema: { kind: z.enum(['plan', 'report']), items: ProposeInput.shape.items.optional(), why: ProposeInput.shape.why.optional(), refs: ProposeInput.shape.refs,
+      week: ReportInput.shape.week, text: ReportInput.shape.text.optional(), recommendations: ReportInput.shape.recommendations },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ kind, items, why, refs, week, text, recommendations }) => run(() => kind === 'plan'
+    ? master.propose(caller, space, { items: items ?? [], why: why ?? '', refs })
+    : master.proposeReport(caller, space, { week, text: text ?? '', recommendations })));
   return server;
 }

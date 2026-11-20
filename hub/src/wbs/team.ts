@@ -9,8 +9,9 @@ import type { Spaces } from './spaces.js';
 import type { Plans } from './plan.js';
 import type { Views } from './views.js';
 import type { Briefs } from './weekly.js';
+import type { MasterAgent } from './master.js';
 
-export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, views: Views | undefined, caller: Caller, space: string, briefs?: Briefs) {
+export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, views: Views | undefined, caller: Caller, space: string, briefs?: Briefs, master?: MasterAgent) {
   const e = await spaces.enter(caller, space, 'plan.read');
   const s = await store.space(space);
   if (!s) throw new LedgerError('not_found', 'No such space');
@@ -36,6 +37,8 @@ export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, v
     plan: pva,
     alignment,
     weekly,
+    // the team master agent (4.5): which agents act for the team, what waits for the caller's decision, the latest approved report
+    agent: master ? await master.summary(caller, space) : null,
     my_shared: mine,
     my_views: seen && { totals: seen.totals, lines: seen.lines },
   };
