@@ -66,16 +66,6 @@ export interface WeeklyBrief {
   lines: string[];
 }
 
-/** A quarter's mutual review round in a team space (execution WBS 4.4). `participants`: the owners and members when
- *  it opened; nothing written in it is shown to anyone but its writer until `released` (everyone done, or `due` passed). */
-export interface ReviewRound { id: string; from: string; to: string; opened: number; by: string; due: string; participants: string[]; released: number | null }
-/** One answer in the writer's own words, with the evidence it cites (the hub's ids and their labels when written). */
-export interface ReviewAnswer { q: string; text: string; refs: { ref: string; label: string }[] }
-/** What one participant wrote about another (`about === by`: their self-review). `via`: the agent it came through, '' in person. */
-export interface Review { round: string; by: string; about: string; answers: ReviewAnswer[]; via: string; at: number }
-/** After release, a participant's reply to the reviews about them and their goals for the next quarter. */
-export interface ReviewReply { round: string; by: string; text: string; goals: string[]; at: number }
-
 /** One of a team's intents (execution WBS 4.1; the charter's 의도 정렬: why, what, how), at most five in force, ranked.
  *  Plan items point at intents; the alignment shows where the shared work actually goes against them. */
 export interface Intent {
@@ -247,17 +237,6 @@ export interface Store {
   putWeekly(id: string, b: WeeklyBrief): Promise<void>;
   weeklies(id: string): Promise<string[]>;
   removeWeekly(id: string, week: string): Promise<void>;
-  /** Mutual review (4.4): a team's rounds by quarter, the reviews written in one (one per writer and subject), the
-   *  replies after release, and a round removed with everything in it. */
-  reviewRounds(id: string): Promise<ReviewRound[]>;
-  putReviewRound(id: string, r: ReviewRound): Promise<void>;
-  removeReviewRound(id: string, round: string): Promise<void>;
-  reviews(id: string, round: string): Promise<Review[]>;
-  putReview(id: string, r: Review): Promise<void>;
-  removeReview(id: string, round: string, by: string, about: string): Promise<void>;
-  replies(id: string, round: string): Promise<ReviewReply[]>;
-  putReply(id: string, r: ReviewReply): Promise<void>;
-  removeReply(id: string, round: string, by: string): Promise<void>;
   /** A team space's intents (4.1), and the same read-and-write-atomically pattern as the plan. */
   intents(id: string): Promise<Intent[]>;
   intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T>;

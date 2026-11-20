@@ -10,7 +10,6 @@ import type { Plans } from './wbs/plan.js';
 import type { Views } from './wbs/views.js';
 import { SHARE_FIELDS, type Store } from './store/types.js';
 import type { Briefs } from './wbs/weekly.js';
-import type { Reviews } from './wbs/review.js';
 import { teamOverview } from './wbs/team.js';
 import type { Config } from './config.js';
 
@@ -26,7 +25,7 @@ function send(res: Response, f: () => Promise<unknown>) {
 const need = (scope: string) => (req: Authed, res: Response, next: () => void) =>
   req.scopes?.includes(scope) ? next() : res.status(403).set('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${scope}"`).json({ error: 'insufficient_scope', scope });
 
-export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?: Plans, views?: Views, store?: Store, briefs?: Briefs, reviews?: Reviews): Router {
+export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?: Plans, views?: Views, store?: Store, briefs?: Briefs): Router {
   const r = Router(); r.use(express.json({ limit: '256kb' }));
   const list = (v: unknown) => typeof v === 'string' && v ? v.split(',') : undefined;
   // the token's agent acts for its person; `?space=<id>` picks a team space (the permission table decides), default personal
@@ -58,22 +57,10 @@ export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?:
       : req.query.view === 'alignment' ? plans.align(who(req), sp(req)) : plans.actual(who(req), sp(req), yr(req))));
     r.post('/plan', need('wbs.write'), (req: Authed, res) => send(res, () => plans.put(who(req), sp(req), req.body)));
     r.get('/share', need('wbs.read'), (req: Authed, res) => send(res, () => plans.mine(who(req))));
-    if (store) r.get('/team', need('wbs.read'), (req: Authed, res) => send(res, () => teamOverview(store, spaces, plans, views, who(req), sp(req), briefs, reviews)));
+    if (store) r.get('/team', need('wbs.read'), (req: Authed, res) => send(res, () => teamOverview(store, spaces, plans, views, who(req), sp(req), briefs)));
     if (briefs) {   // the weekly team brief and the caller's own coaching (4.3)
       r.get('/weekly', need('wbs.read'), (req: Authed, res) => send(res, () => briefs.weekly(who(req), sp(req), typeof req.query.week === 'string' ? req.query.week : undefined)));
       r.get('/coach', need('wbs.read'), (req: Authed, res) => send(res, () => briefs.coach(who(req))));
-    }
-    if (reviews) {   // the quarterly mutual review (4.4)
-      const q = (req: Authed) => typeof req.query.quarter === 'string' ? req.query.quarter : undefined;
-      r.get('/review', need('wbs.read'), (req: Authed, res) => send(res, () => typeof req.query.about === 'string' && req.query.about
-        ? reviews.questions(who(req), sp(req), req.query.about, q(req)) : reviews.get(who(req), sp(req), q(req))));
-      r.post('/review', need('wbs.write'), (req: Authed, res) => send(res, async () => {
-        const b = req.body ?? {};
-        if (b.action === 'open') return reviews.open(who(req), sp(req), { quarter: b.quarter, due: b.due });
-        if (b.action === 'submit') return reviews.submit(who(req), sp(req), { about: b.about, answers: b.answers }, b.quarter);
-        if (b.action === 'reply') return reviews.reply(who(req), sp(req), { text: b.text, goals: b.goals }, b.quarter);
-        throw new LedgerError('invalid', 'action is open, submit or reply');
-      }));
     }
     r.post('/share', need('wbs.write'), (req: Authed, res) => send(res, () => plans.share(who(req), req.body)));
     r.delete('/share/:year/:code', need('wbs.write'), (req: Authed, res) => send(res, () => plans.unshare(who(req), { year: String(req.params.year), code: String(req.params.code) })));
@@ -130,17 +117,6 @@ export function openapi(cfg: Config, version: string) {
         parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }], responses: { 200: { description: 'Team overview' } } } },
       '/weekly': { get: { operationId: 'weeklyBrief', summary: 'A team\'s weekly brief: progress, bottlenecks, risks for the next 7 days, intents, what falls due next; about the work only (owners, members). Default: the last week that has ended',
         parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }, { name: 'week', in: 'query', required: false, schema: { type: 'string', pattern: '^\\d{4}-W\\d{2}$' } }], responses: { 200: { description: 'Weekly brief' } } } },
-      '/review': {
-        get: { operationId: 'readReview', summary: 'A team\'s quarterly mutual review: its state, your todo, and after release what symmetric disclosure lets you read; with about ("self" or a participant id), the questions with the work evidence attached',
-          parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }, { name: 'quarter', in: 'query', required: false, schema: { type: 'string', pattern: '^\\d{4}-Q[1-4]$' } },
-            { name: 'about', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'The round, or the questions for one person' } } },
-        post: { operationId: 'writeReview', summary: 'Open the quarter\'s round (owners), submit your answers about one participant in your own words, or reply with up to three goals after release',
-          parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }],
-          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['action'], properties: {
-            action: { type: 'string', enum: ['open', 'submit', 'reply'] }, quarter: { type: 'string' }, due: { type: 'string', format: 'date' }, about: { type: 'string' },
-            answers: { type: 'array', items: { type: 'object', required: ['q', 'text'], properties: { q: { type: 'string' }, text: { type: 'string', maxLength: 1200 }, refs: { type: 'array', items: { type: 'string' } } } } },
-            text: { type: 'string' }, goals: { type: 'array', maxItems: 3, items: { type: 'string' } } } } } } }, responses: { 200: { description: 'Saved' } } },
-      },
       '/coach': { get: { operationId: 'coachMe', summary: 'Coaching for you alone: pace against your own past weeks, overdue, due within 7 days, stalled, work style, your part in each team. Never for others', responses: { 200: { description: 'Coaching' } } } },
       '/views': { get: { operationId: 'listViews', summary: 'Who viewed your shared rows: person or agent, team space, how many rows, when and how often (yours only; kept 180 days)',
         parameters: [{ name: 'days', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 180 } }, { name: 'space', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'View log' } } } },

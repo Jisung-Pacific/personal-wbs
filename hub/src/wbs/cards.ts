@@ -105,8 +105,6 @@ export function workIndicators(rows: SharedWork[]) {
 const isPerson = (c: Caller) => c.kind === 'person';
 
 export class Cards {
-  /** Called when the owner switches employee mode (mutual review switches off with the cards, 4.4). */
-  employee?: (space: string, on: boolean) => Promise<void>;
   constructor(private store: Store, private spaces: Spaces, private views?: Views) {
     const prev = spaces.left;   // leaving a team (or becoming a guest) takes one's card off it
     spaces.left = async (space, uid) => { await prev?.(space, uid); await this.store.removeCard(space, uid); };
@@ -193,15 +191,13 @@ export class Cards {
     return { space, employee_mode: false, mine: own ? view(own, null) : null, cards: others };
   }
 
-  /** Employee mode (the owner's switch): on, every card in the team is removed and none can be published; mutual
-   *  review rounds go with them (4.4). */
+  /** Employee mode (the owner's switch): on, every card in the team is removed and none can be published. */
   async setEmployeeMode(caller: Caller, space: string, on: boolean) {
     this.person(caller);
     await this.spaces.enter(caller, space, 'cards.mode');
     await this.store.setCardsOff(space, on);
     let removed = 0;
     if (on) for (const c of await this.store.cards(space)) { await this.store.removeCard(space, c.uid); removed++; }
-    await this.employee?.(space, on);
     return { space, employee_mode: on, removed };
   }
 }

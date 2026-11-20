@@ -12,7 +12,6 @@ import { IntentInput, PlanItemInput, ShareInput, type Plans } from './wbs/plan.j
 import { ViewsInput, type Views } from './wbs/views.js';
 import { teamOverview } from './wbs/team.js';
 import type { Briefs } from './wbs/weekly.js';
-import { ReviewOpenInput, ReviewReplyInput, ReviewSubmitInput, type Reviews } from './wbs/review.js';
 
 export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every year of their work as atomic rows (one concrete deliverable, decision or event per row, dated from its source), shared by every agent they use.
 - Before adding, search (wbs_search) for the same work; extend an existing task with a dated step (wbs_add with parent) or a status change (wbs_update) instead of a near-duplicate row.
@@ -43,7 +42,7 @@ const run = async (f: () => Promise<unknown>) => { try { return ok(await f()); }
 
 /** `env`: the team space when the connection came through that team's own address (3.8); `hubUrl` gives each team its
  *  connector address in wbs_spaces. */
-export interface McpOptions { env?: string; hubUrl?: string; briefs?: Briefs; reviews?: Reviews }
+export interface McpOptions { env?: string; hubUrl?: string; briefs?: Briefs }
 
 export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans, views?: Views, ledgerStore?: Store, opts: McpOptions = {}): McpServer {
   const env = opts.env;
@@ -101,7 +100,7 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'Everything a team screen shows, in one call: the space and the user\'s role, the charter in force and any open proposal, the members (owners and members only), the plan against the actual work (as wbs_plan), the user\'s own rows shared there, and who read them in the last 30 days. Use it when the user switches to a team or asks how the team is doing.',
       inputSchema: { space: teamSpace }, annotations: ro,
     }, async a => run(async () => {
-      const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space), opts.briefs, opts.reviews);   // its address only for those who may connect it
+      const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space), opts.briefs);   // its address only for those who may connect it
       return { ...t, ...(opts.hubUrl && t.space.role !== 'guest' ? { connector_url: `${opts.hubUrl}/mcp/t/${t.space.id}` } : {}) };
     }));
     const briefs = opts.briefs;
@@ -116,13 +115,6 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
         + (env ? ' On this team connection it covers only the rows linked to this team.' : ''),
       inputSchema: {}, annotations: ro,
     }, async () => run(() => briefs.coach(caller, env)));
-    const reviews = opts.reviews;
-    if (reviews) server.registerTool('wbs_review', {
-      title: 'Read the team\'s quarterly mutual review',
-      description: 'A team\'s mutual review round for a quarter (owners and members; once a quarter; no ratings or scores): its state, who the user still has to review (todo: "self" and teammates\' ids), and once released the reviews the user may read — from the teammates the user reviewed, and the teammates\' self-reviews and goals if the user wrote one — never reviews between two other people. Nothing is shown before release (everyone done, or the due date passed). With about ("self" or a participant\'s id): the questions about that person with the work evidence attached (their rows shared with the team this quarter, the plan items they carry, their work per intent, last quarter\'s goals, their card direction where visible). To run a review, ask the user each question in turn with its evidence and record only the user\'s own words with wbs_review_put; never draft, invent or soften an answer, and never review a person on the user\'s behalf.',
-      inputSchema: { space: teamSpace, quarter: z.string().regex(/^\d{4}-Q[1-4]$/).optional().describe('YYYY-Qn; default the latest round'),
-        about: z.string().max(128).optional().describe('"self" or a participant\'s account id: the questions and evidence for that person') }, annotations: ro,
-    }, async a => run(() => a.about ? reviews.questions(caller, sp(a.space), a.about, a.quarter) : reviews.get(caller, sp(a.space), a.quarter)));
     if (views) server.registerTool('wbs_views', {
       title: 'See who viewed your shared rows',
       description: 'Who read team content carrying the user\'s shared rows: which person (and through which agent) or the team\'s agent, in which team space, how many of the user\'s rows, and when (first and last time each day, how often). Only the user sees this; their own reads are not listed. Days are kept 180 days.',
@@ -209,19 +201,6 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       inputSchema: { space: teamSpace, items: z.array(PlanItemInput).max(200).optional(), intents: z.array(IntentInput).max(10).optional(), memo: z.string().max(300).optional() },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ space: s, ...a }) => run(() => plans.put(caller, sp(s), a)));
-    if (opts.reviews) {
-      const reviews = opts.reviews;
-      server.registerTool('wbs_review_put', {
-        title: 'Open, write or reply in the quarterly mutual review',
-        description: 'action "open" (owners): opens the quarter\'s round for the owners and members now in the team (due in 14 days by default). action "submit": the user\'s answers about one participant (about: "self" or their id), in the user\'s own words only — ask each question from wbs_review and write down what the user says; required questions need at least a sentence; refs cite the evidence; revisable until release. action "reply" (after release): the user\'s reply to the reviews about them and up to three goals for the next quarter.',
-        inputSchema: { space: teamSpace, action: z.enum(['open', 'submit', 'reply']), quarter: ReviewOpenInput.shape.quarter, due: ReviewOpenInput.shape.due,
-          about: ReviewSubmitInput.shape.about.optional(), answers: ReviewSubmitInput.shape.answers.optional(), text: ReviewReplyInput.shape.text, goals: ReviewReplyInput.shape.goals },
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      }, async ({ space: s, action, quarter, due, about, answers, text, goals }) => run(() =>
-        action === 'open' ? reviews.open(caller, sp(s), { quarter, due })
-          : action === 'submit' ? reviews.submit(caller, sp(s), { about: about ?? '', answers: answers ?? [] }, quarter)
-            : reviews.reply(caller, sp(s), { text, goals }, quarter)));
-    }
     if (plans) server.registerTool('wbs_share', {
       title: 'Share a row of yours with a team plan',
       description: 'Link one row of the user\'s own ledger to a team plan item and choose which of its fields the team sees (status always; default title, status, start, end, due, last_progress, links; add goal, blocker, evidence or task only when the user wants them shared). The team\'s copy follows the row from then on. stop: true withdraws it. Work is recorded in the personal ledger first (wbs_add), then shared.',

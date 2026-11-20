@@ -27,7 +27,7 @@ import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-ad
 import {
   isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type WeeklyBrief, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
   type Intent, type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
-  type ViewEntry, type ReviewRound, type Review, type ReviewReply,
+  type ViewEntry,
 } from './types.js';
 import { matches, mergeViews } from './memory.js';
 import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from '../crypto/envelope.js';
@@ -323,33 +323,6 @@ export class FirestoreStore implements Store {
   async putWeekly(id: string, b: WeeklyBrief) { await this.weeklyCol(id).doc(b.week).set({ enc: await this.envelope.seal(spaceOwner(id), `weekly/${b.week}`, b) }); }
   async weeklies(id: string) { return (await this.weeklyCol(id).select().get()).docs.map(d => d.id).sort(); }
   async removeWeekly(id: string, week: string) { await this.weeklyCol(id).doc(week).delete(); }
-
-  // mutual review (4.4): spaces/{id}/reviews/{YYYY-Qn} with entries/{writer}~{subject} and replies/{writer} under it,
-  // each sealed under the space's key; one document per writer and subject, so people writing at once never collide
-  private reviewCol(id: string) { return this.spaceDoc(id).collection('reviews'); }
-  async reviewRounds(id: string) {
-    const s = await this.reviewCol(id).get();
-    return (await Promise.all(s.docs.map(d => this.envelope.open<ReviewRound>(spaceOwner(id), `reviews/${d.id}`, d.get('enc') as Sealed)))).sort((a, b) => a.id.localeCompare(b.id));
-  }
-  async putReviewRound(id: string, r: ReviewRound) { await this.reviewCol(id).doc(r.id).set({ enc: await this.envelope.seal(spaceOwner(id), `reviews/${r.id}`, r) }); }
-  async removeReviewRound(id: string, round: string) { await this.db.recursiveDelete(this.reviewCol(id).doc(round)); }
-  async reviews(id: string, round: string) {
-    const s = await this.reviewCol(id).doc(round).collection('entries').get();
-    return Promise.all(s.docs.map(d => this.envelope.open<Review>(spaceOwner(id), `reviews/${round}/${d.id}`, d.get('enc') as Sealed)));
-  }
-  async putReview(id: string, r: Review) {
-    const k = `${r.by}~${r.about}`;
-    await this.reviewCol(id).doc(r.round).collection('entries').doc(k).set({ enc: await this.envelope.seal(spaceOwner(id), `reviews/${r.round}/${k}`, r) });
-  }
-  async removeReview(id: string, round: string, by: string, about: string) { await this.reviewCol(id).doc(round).collection('entries').doc(`${by}~${about}`).delete(); }
-  async replies(id: string, round: string) {
-    const s = await this.reviewCol(id).doc(round).collection('replies').get();
-    return Promise.all(s.docs.map(d => this.envelope.open<ReviewReply>(spaceOwner(id), `reviews/${round}/reply/${d.id}`, d.get('enc') as Sealed)));
-  }
-  async putReply(id: string, r: ReviewReply) {
-    await this.reviewCol(id).doc(r.round).collection('replies').doc(r.by).set({ enc: await this.envelope.seal(spaceOwner(id), `reviews/${r.round}/reply/${r.by}`, r) });
-  }
-  async removeReply(id: string, round: string, by: string) { await this.reviewCol(id).doc(round).collection('replies').doc(by).delete(); }
 
   // cards (4.2): spaces/{id}/cards/{uid}, sealed under the space's key; employee mode is a plain flag on the space
   private cardsCol(id: string) { return this.spaceDoc(id).collection('cards'); }
