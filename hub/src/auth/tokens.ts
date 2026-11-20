@@ -14,7 +14,7 @@ export function pkceOk(verifier: string, challenge: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export interface AccessClaims { uid: string; clientId: string; clientName: string; scopes: string[]; resource: string; exp: number }
+export interface AccessClaims { uid: string; clientId: string; clientName: string; scopes: string[]; resource: string; exp: number; iat: number }
 
 export class TokenIssuer {
   private constructor(private issuer: string, private key: CryptoKey, private verifyKey: CryptoKey, private pub: JWK, private ttl: number) {}
@@ -49,15 +49,16 @@ export class TokenIssuer {
       .setIssuer(this.issuer).setSubject(uid).setAudience(`${this.issuer}/app`)
       .setIssuedAt().setJti(random(12)).setExpirationTime(`${ttlSeconds}s`).sign(this.key);
   }
-  async verifySession(token: string): Promise<string> {
+  /** The person and when the session was issued (`iat`, seconds): a session older than its account's deletion is refused. */
+  async verifySession(token: string): Promise<{ uid: string; iat: number }> {
     const { payload } = await jwtVerify(token, this.verifyKey, { issuer: this.issuer, audience: `${this.issuer}/app`, typ: 'session+jwt', algorithms: ['ES256'] });
-    return String(payload.sub);
+    return { uid: String(payload.sub), iat: Number(payload.iat) };
   }
 
   /** Verifies signature, issuer, expiry and that the token was minted for one of `audiences`. */
   async verify(token: string, audiences: string[]): Promise<AccessClaims> {
     const { payload } = await jwtVerify(token, this.verifyKey, { issuer: this.issuer, audience: audiences, typ: 'at+jwt', algorithms: ['ES256'] });
     const aud = Array.isArray(payload.aud) ? payload.aud[0] : payload.aud;
-    return { uid: String(payload.sub), clientId: String(payload.client_id), clientName: String(payload.client_name || ''), scopes: String(payload.scope || '').split(' ').filter(Boolean), resource: String(aud), exp: Number(payload.exp) };
+    return { uid: String(payload.sub), clientId: String(payload.client_id), clientName: String(payload.client_name || ''), scopes: String(payload.scope || '').split(' ').filter(Boolean), resource: String(aud), exp: Number(payload.exp), iat: Number(payload.iat) };
   }
 }

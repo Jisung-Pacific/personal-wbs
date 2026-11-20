@@ -218,9 +218,14 @@ export interface Store {
   /** A credential kept for the account (sealed at rest in the Firestore store), e.g. the host product's session. */
   putSecret(uid: string, name: string, value: unknown): Promise<void>;
   secret<T>(uid: string, name: string): Promise<T | null>;
-  /** Removes the account's ledger and secrets; the Firestore store shreds the account's data key first.
+  /** Removes the account's ledger, secrets and refresh tokens; the Firestore store shreds the account's data key first.
    *  Team memberships are ended before this by Spaces.deleteAccount, which applies the ownership rules. */
   deleteAccount(uid: string): Promise<void>;
+  /** The tombstone an account deletion leaves first (execution WBS 5.4): every token and session issued before `at` stops
+   *  at once (auth/revocations.ts). Kept for a month, longer than any credential lives (Firestore TTL on `expire`). */
+  markDeleted(uid: string, at: number): Promise<void>;
+  /** When the account was deleted, or null: a later sign-in with the same identity starts a fresh, empty account. */
+  deletedAt(uid: string): Promise<number | null>;
   // team spaces (ledger calls take `spaces/<id>` as their owner; the calls below keep the membership records)
   /** Creates the space with its owner as the first member. */
   createSpace(s: SpaceRecord): Promise<void>;

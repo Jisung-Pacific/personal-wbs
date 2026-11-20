@@ -16,7 +16,7 @@
 // algorithmic control by recommending, recording, rating, replacing).
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { Proposal, Store, WeeklyReport } from '../store/types.js';
+import type { Delegation, Proposal, Store, WeeklyReport } from '../store/types.js';
 import { LedgerError } from './service.js';
 import { callerUid, type Caller } from './access.js';
 import type { Spaces } from './spaces.js';
@@ -39,7 +39,30 @@ export const ReportInput = z.object({
 });
 
 export class MasterAgent {
-  constructor(private store: Store, private spaces: Spaces, private plans: Plans, private today: () => string = todayKst) {}
+  constructor(private store: Store, private spaces: Spaces, private plans: Plans, private today: () => string = todayKst) {
+    const prev = spaces.left;   // a delegation lasts only while the person who made it is still in the team (leaving, deleting the account)
+    spaces.left = async (space, uid) => { await prev?.(space, uid); await this.endDelegations(space, uid); };
+  }
+
+  /** The delegations a person made in a team end when they leave it, exactly as if the owner had stopped them. */
+  private async endDelegations(space: string, uid: string) {
+    for (const d of await this.store.delegations(space)) if (d.by === uid && d.active) await this.halt(space, d, uid, '위임한 사람이 팀을 떠남');
+  }
+
+  /** Ends a delegation: its grant is revoked, its next call refused, its open proposals withdrawn and its report drafts set
+   *  aside. `note`: why, on the withdrawn proposals. */
+  private async halt(space: string, d: Delegation, by: string, note: string) {
+    if (d.family) await this.store.revokeFamily(d.family);
+    const { family: _f, ...rest } = d;
+    await this.store.putDelegation(space, { ...rest, active: false, stopped: { by, at: Date.now() } });
+    let withdrawn = 0;
+    for (const p of await this.store.proposals(space)) {
+      if (p.status !== 'open' || p.client_id !== d.client_id) continue;
+      await this.store.putProposal(space, { ...p, status: 'withdrawn', closed: Date.now(), note }); withdrawn++;
+    }
+    for (const r of await this.store.reports(space)) if (r.status === 'proposed' && r.client_id === d.client_id) await this.store.putReport(space, { ...r, status: 'withdrawn' });
+    return withdrawn;
+  }
 
   private agent(caller: Caller) {
     if (caller.kind !== 'team_agent') throw new LedgerError('forbidden', 'Only the team master agent proposes; people change the plan themselves');
@@ -69,15 +92,7 @@ export class MasterAgent {
     await this.spaces.enter(caller, space, 'agent.manage');
     const d = (await this.store.delegations(space)).find(x => x.client_id === clientId);
     if (!d) throw new LedgerError('not_found', 'No such delegation');
-    if (d.family) await this.store.revokeFamily(d.family);
-    const { family: _f, ...rest } = d;
-    await this.store.putDelegation(space, { ...rest, active: false, stopped: { by: me, at: Date.now() } });
-    let withdrawn = 0;
-    for (const p of await this.store.proposals(space)) {
-      if (p.status !== 'open' || p.client_id !== clientId) continue;
-      await this.store.putProposal(space, { ...p, status: 'withdrawn', closed: Date.now(), note: '위임 중단' }); withdrawn++;
-    }
-    for (const r of await this.store.reports(space)) if (r.status === 'proposed' && r.client_id === clientId) await this.store.putReport(space, { ...r, status: 'withdrawn' });
+    const withdrawn = await this.halt(space, d, me, '위임 중단');
     return { space, client_id: clientId, stopped: true, withdrawn };
   }
 

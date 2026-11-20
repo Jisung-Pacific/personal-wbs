@@ -71,14 +71,14 @@ export function privacyPage(cfg: Config, lang: 'ko' | 'en'): string {
     ['무엇을 저장하나', '작업 원장(작업 행, 날짜, 상태, 근거 표시), 그 변경 이력, 받은 편지함 항목(브라우저 확장이나 에이전트가 보낸 대화·검색어·메모), 연결된 앱의 등록 정보와 토큰의 해시값.'],
     ['어떻게 보호하나', '계정마다 무작위 256비트 데이터 키를 만들고, 그 키는 클라우드 KMS 키로만 감싼 채 보관합니다. 원장 행·이력·받은 편지함·저장된 자격 증명은 그 키로 AES-256-GCM 암호화하고 계정과 위치에 묶습니다. 데이터베이스 사본이나 백업만으로는 읽을 수 없습니다.'],
     ['누가 읽나', '내가 OAuth로 허용한 앱이 그 권한 범위 안에서만 읽고 씁니다. 운영자는 법적 의무나 보안 사고 대응, 내가 요청한 지원 외에는 내용을 열람하지 않습니다.'],
-    ['얼마나 보관하나', '원장은 내가 지울 때까지 보관합니다. 처리된 받은 편지함 항목은 30일 뒤 지워집니다. 계정을 삭제하면 데이터 키부터 지워 모든 사본을 읽을 수 없게 한 뒤 문서를 지웁니다.'],
+    ['얼마나 보관하나', '원장은 내가 지울 때까지 보관합니다. 처리된 받은 편지함 항목은 30일 뒤 지워집니다. 계정은 허브의 내 공간에서 원장을 CSV로 내려받은 뒤 직접 지울 수 있습니다. 지우면 이미 발급된 토큰과 로그인이 바로 끊기고, 데이터 키부터 지워 모든 사본을 읽을 수 없게 한 뒤 문서를 지웁니다.'],
     ...(host ? [['회원 계정', `연결을 허용하면 ${host} 계정으로 로그인되고, 처음이면 ${host} 회원으로 가입됩니다. ${host}의 개인정보처리방침이 함께 적용됩니다.`]] : []),
     ['브라우저 확장', '확장은 내가 누를 때만 열린 탭의 대화를, 내가 켰을 때만 Google 검색어와 시각을 내 계정으로 보냅니다. 브라우저 확장에서 받은 정보의 사용은 Chrome 웹 스토어 사용자 데이터 정책(제한적 사용 요건 포함)을 따릅니다. 광고, 판매, 신용 평가에 쓰지 않습니다.'],
   ] : [
     ['What is stored', 'Your work ledger (task rows, dates, status, evidence pointers), its change history, inbox items (conversations, search queries or notes sent by the browser extension or an agent), and the registrations of connected apps with hashes of their tokens.'],
     ['How it is protected', 'Each account gets a random 256-bit data key, kept only wrapped by a cloud KMS key. Ledger rows, history, inbox items and stored credentials are encrypted with it (AES-256-GCM), each bound to its account and place. A database copy or backup alone cannot be read.'],
     ['Who reads it', 'Only the apps you allowed through OAuth, within the access you granted. The operator does not look at content except for legal obligations, security incidents or support you ask for.'],
-    ['How long it is kept', 'The ledger stays until you delete it. Processed inbox items are deleted after 30 days. Deleting your account deletes its data key first, which makes every copy unreadable, and then the documents.'],
+    ['How long it is kept', 'The ledger stays until you delete it. Processed inbox items are deleted after 30 days. You can download your ledger as CSV and delete your account yourself on the hub\'s own pages. Deleting it cuts off every token and sign-in already issued at once, deletes its data key first, which makes every copy unreadable, and then the documents.'],
     ...(host ? [['Your account', `Allowing a connection signs you in with your ${host} account and, the first time, makes you a ${host} member; ${host}'s privacy policy applies as well.`]] : []),
     ['Browser extension', 'The extension sends the conversation on the open tab only when you click, and Google search queries with their time only when you switch that on, to your own account. The use of information received from the browser extension adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements. It is never used for advertising, sold, or used to determine creditworthiness.'],
   ];

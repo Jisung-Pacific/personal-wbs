@@ -25,6 +25,8 @@
 // ciphertext.
 //   oauth_clients/{sha256(client_id)}  registered or metadata-document clients
 //   oauth_requests/{id}, oauth_codes/{hash}, oauth_refresh/{hash}   short-lived OAuth state; `expire` drives a TTL policy
+//   deleted_accounts/{sha256(uid)}     an account deletion's tombstone (5.4): {at, expire} — credentials issued before `at`
+//                                      stop at once; kept a month (TTL), longer than any credential lives
 import { createHash } from 'node:crypto';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type DocumentReference, type Firestore, type Query } from 'firebase-admin/firestore';
@@ -38,6 +40,7 @@ import { Envelope, type DekStore, type Kek, type Sealed, type WrappedDek } from 
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const expire = (ms: number) => Timestamp.fromMillis(ms);
+const TOMBSTONE_MS = 31 * 86400e3;   // far past every credential minted before it (access 1 h, session 8 h; refresh tokens are deleted)
 const SPACE_OWNER_RE = /^spaces\/s_[A-Za-z0-9_-]{22}$/;
 
 /** A membership as stored: role, since, by, and a guest's projects ("YYYY:<package code>", plaintext like a row's code). */
@@ -182,11 +185,24 @@ export class FirestoreStore implements Store {
     const d = await home(this.db, uid).collection('secrets').doc(name).get();
     return d.exists ? this.envelope.open<T>(uid, `secrets/${name}`, d.data()!.enc as Sealed) : null;
   }
-  /** Shred first (the data becomes unreadable at once), then remove the documents. */
+  /** Refresh tokens go first (no new access token can be minted), then the key is shredded (the data becomes unreadable at
+   *  once), then the documents are removed. */
   async deleteAccount(uid: string) {
     if (isSpaceOwner(uid)) throw new Error('deleteAccount takes an account, not a space');
+    for (;;) {   // in batches: a person may have connected several agents over a month
+      const s = await this.db.collection('oauth_refresh').where('uid', '==', uid).limit(400).get();
+      if (s.empty) break;
+      const b = this.db.batch(); s.docs.forEach(d => b.delete(d.ref)); await b.commit();
+    }
     await this.envelope.shred(uid);
     await this.db.recursiveDelete(home(this.db, uid));
+  }
+  async markDeleted(uid: string, at: number) {
+    await this.db.collection('deleted_accounts').doc(sha(uid)).set({ at, expire: expire(at + TOMBSTONE_MS) });
+  }
+  async deletedAt(uid: string) {
+    const d = await this.db.collection('deleted_accounts').doc(sha(uid)).get();
+    return d.exists ? Number(d.data()!.at) : null;
   }
 
   // ---------------------------------------------------------------- team spaces

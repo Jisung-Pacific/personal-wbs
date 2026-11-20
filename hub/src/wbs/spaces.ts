@@ -297,17 +297,37 @@ export class Spaces {
     return { deleted: id };
   }
 
-  /** Before an account goes (a person's own request): it leaves every team space, and a space it owns alone goes with it.
-   *  A space it owns with others must be handed over first; nothing is removed until every space passes that check. */
-  async deleteAccount(uid: string) {
+  /** What deleting the account would do to its team spaces, shown before the person decides: the spaces it owns alone go
+   *  with it, it leaves the others, and a space it owns with other people blocks the deletion until it is handed over or
+   *  deleted (`people`: members and guests besides the owner). */
+  async deletionPlan(uid: string) {
     assertUid(uid);
-    const mine = await this.store.spacesOf(uid), owned = mine.filter(s => s.role === 'owner');
-    for (const s of owned) if ((await this.store.members(s.id)).length > 1) throw new LedgerError('invalid', `Hand space ${s.id} to a member before deleting the account`);
-    for (const s of mine) {
-      if (s.role === 'owner') { await this.store.deleteSpace(s.id); continue; }
+    const mine = await Promise.all((await this.store.spacesOf(uid)).map(async s => ({ ...s, people: (await this.store.members(s.id)).length - 1 })));
+    return {
+      deletes: mine.filter(s => s.role === 'owner' && s.people === 0).map(s => s.id),
+      leaves: mine.filter(s => s.role !== 'owner').map(s => ({ id: s.id, role: s.role })),
+      blocks: mine.filter(s => s.role === 'owner' && s.people > 0).map(s => ({ id: s.id, people: s.people })),
+    };
+  }
+
+  /** A person deletes their own account (the hub's page asks them first; no agent can). Nothing is removed while a space
+   *  it owns with others blocks it. Then, in this order: the tombstone (every token and session issued before now stops:
+   *  auth/revocations.ts), the spaces it owns alone, its place in the others (as when leaving: its card goes, its
+   *  delegations end, its shared rows stay as frozen copies — or go too with `withShared`), and its own ledger, secrets and
+   *  refresh tokens (Store.deleteAccount). */
+  async deleteAccount(uid: string, opts: { now?: number; withShared?: boolean } = {}) {
+    const plan = await this.deletionPlan(uid), now = opts.now ?? Date.now();
+    if (plan.blocks.length) throw new LedgerError('invalid', `Hand ${plan.blocks.map(b => b.id).join(', ')} to a member, or delete it, before deleting the account`, { blocks: plan.blocks });
+    await this.store.markDeleted(uid, now);
+    for (const id of plan.deletes) await this.store.deleteSpace(id);
+    let sharedRemoved = 0;
+    for (const s of plan.leaves) {
       await this.store.removeMember(s.id, uid); await this.left?.(s.id, uid);
+      if (opts.withShared) for (const w of await this.store.shared(s.id)) if (w.uid === uid) { await this.store.removeShared(s.id, w.id); sharedRemoved++; }
+      await this.settle(s.id);
     }
     await this.store.deleteAccount(uid);
+    return { deleted: true as const, at: now, spaces_deleted: plan.deletes.length, spaces_left: plan.leaves.length, shared_removed: sharedRemoved };
   }
 
   // ---------------------------------------------------------------- the team charter

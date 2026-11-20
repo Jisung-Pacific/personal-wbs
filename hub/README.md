@@ -16,7 +16,7 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
-| `/app` | People's own pages: team spaces, charters, invitations, members, cards — signed in in person, never through an agent. |
+| `/app` | People's own pages: team spaces, charters, invitations, members, cards, one's own CSV export and account deletion — signed in in person, never through an agent. |
 | `/internal/weekly` | The Monday run of the weekly team briefs; only Cloud Scheduler's own account may call it. |
 
 Ledger rules live in the tools: one concrete result per row, codes assigned by the hub (next free number, never
@@ -88,9 +88,18 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   space's `wbs_brief` and `wbs_team` carry the alignment too.
 - **People's own pages** (`/app`): what only a person may do, by their own hand — make a team space, propose and agree
   to its charter, invite people (a link or an account), accept or decline an invitation, change a role, remove members,
-  move between one's teams, leave — on the hub's own pages, signed in with the same accounts as the consent
-  page. The hub keeps a first-party session in an HttpOnly, SameSite=Strict cookie, accepts changes only with the
-  pages' own request header from this origin, and an agent's access token opens none of it.
+  move between one's teams, leave, hand a team over or delete it by typing its name — on the hub's own pages, signed
+  in with the same accounts as the consent page. The hub keeps a first-party session in an HttpOnly, SameSite=Strict
+  cookie, accepts changes only with the pages' own request header from this origin, and an agent's access token opens
+  none of it.
+- **Deleting an account** (execution WBS 5.4): a person downloads their own `wbs.csv` and `events.csv` from `/app`, sees
+  what deleting would do (the teams that go with the account, the ones it leaves, the ones it owns with others that
+  must be handed over or deleted first), types `계정 삭제` and confirms; no agent can. The hub then writes a tombstone
+  (`deleted_accounts/<sha256(uid)>`, 31-day TTL) before anything else, so every access token and session issued
+  earlier, on any device, is refused at once (within 30 s on other instances: `src/auth/revocations.ts`); ends the
+  person's place in each team as leaving does (their card goes, the delegations they made stop, their shared rows stay
+  as frozen copies unless they choose to remove them too); deletes their refresh tokens; shreds their key; removes
+  their documents. Signing in again with the same identity starts a fresh, empty account.
 - **Work-style and direction cards** (execution WBS 4.2): each person answers the Mini-IPIP once (Donnellan, Oswald,
   Baird & Lucas, 2006, *Psychological Assessment* 18(2), 192–203: twenty public-domain IPIP items, four a trait,
   reverse-keyed as 6 − x, sums 4–20; reported alphas .65–.77). The scores stay in the person's own space, the answers

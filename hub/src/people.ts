@@ -1,7 +1,8 @@
 // The hub's own pages for people (/app): what only a person may do, by their own hand, never through an agent — make a
 // team space, propose and agree to its charter, invite people and remove them, accept or decline an invitation (one
-// account, many teams: execution WBS 5.3), move between one's teams, leave, answer the Big Five questions and publish,
-// change or withdraw one's work-style and direction card (execution WBS 4.2). An agent's OAuth token cannot
+// account, many teams: execution WBS 5.3), move between one's teams, leave, hand a team over or delete it, answer the Big
+// Five questions and publish, change or withdraw one's work-style and direction card (execution WBS 4.2), download one's
+// own ledger and delete one's own account (execution WBS 5.4). An agent's OAuth token cannot
 // act here: a person signs in on this page (the same accounts as the consent page), and the hub keeps a first-party
 // session in an HttpOnly, SameSite=Strict cookie; every change also needs the page's own request header and a
 // same-origin request, so another site can neither send nor forge one.
@@ -14,7 +15,8 @@ import type { TokenIssuer } from './auth/tokens.js';
 import { random } from './auth/tokens.js';
 import type { VerifyIdToken } from './auth/identity.js';
 import { person, type Caller } from './wbs/access.js';
-import { LedgerError } from './wbs/service.js';
+import { LedgerError, type Ledger } from './wbs/service.js';
+import type { Revocations } from './auth/revocations.js';
 import { INVITE_DAYS, MAX_PEOPLE, type InviteRef, type Spaces } from './wbs/spaces.js';
 import { switchList } from './wbs/team.js';
 import { Cards, DEFAULT_SECTIONS, INSTRUCTIONS, MINI_IPIP, SCALE, TRAIT_KO } from './wbs/cards.js';
@@ -27,10 +29,13 @@ const js = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 const ymd = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);   // KST, like the ledger
 const SECTION_KO: Record<CardSection, string> = { ...TRAIT_KO, direction: '방향성' };
 
-export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards; master?: MasterAgent }
+export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards; master?: MasterAgent; ledger?: Ledger; revocations?: Revocations }
+/** What a person types to delete their account: a deliberate act, never one stray click. */
+const DELETE_PHRASE = '계정 삭제';
+const EXPORTS = ['wbs.csv', 'events.csv'] as const;   // one's own ledger, in the file format it came from
 type Signed = Request & { uid?: string };
 
-export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master }: PeopleDeps): Router {
+export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master, ledger, revocations }: PeopleDeps): Router {
   const r = express.Router(), secure = cfg.publicUrl.startsWith('https://'), COOKIE = secure ? '__Host-ppwbs' : 'ppwbs', origin = new URL(cfg.publicUrl).origin;
   const cookieOf = (req: Request) => (req.get('cookie') || '').split(/;\s*/).map(c => c.split('=')).find(([k]) => k === COOKIE)?.[1];
   const setCookie = (res: Response, v: string, age: number) => res.append('Set-Cookie', `${COOKIE}=${v}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`);
@@ -47,10 +52,17 @@ export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards,
 ${external.map(u => `<script nonce="${nonce}" src="${esc(u)}"></script>`).join('')}<script nonce="${nonce}">${BASE_JS}${script}</script></body></html>`);
   };
 
-  /** The signed-in person, from the session cookie; pages without one show the sign-in page, the API answers 401. */
+  /** The signed-in person, from the session cookie; pages without one show the sign-in page, the API answers 401. A
+   *  session issued before its account was deleted (on any device) is dropped like an expired one (5.4). */
   const signed = (api: boolean) => async (req: Signed, res: Response, next: NextFunction) => {
     const t = cookieOf(req);
-    if (t) { try { req.uid = await issuer.verifySession(t); return next(); } catch { /* expired or foreign: sign in again */ } }
+    if (t) {
+      try {
+        const s = await issuer.verifySession(t);
+        if (!(await revocations?.revoked(s.uid, s.iat))) { req.uid = s.uid; return next(); }
+        setCookie(res, '', 0);
+      } catch { /* expired or foreign: sign in again */ }
+    }
     if (api) return res.status(401).json({ error: 'sign_in', message: 'Sign in on the hub page first' });
     signInPage(res);
   };
@@ -62,8 +74,8 @@ ${external.map(u => `<script nonce="${nonce}" src="${esc(u)}"></script>`).join('
     next();
   };
   const json = express.json({ limit: '32kb' });
-  const act = (f: (who: Caller, req: Signed) => Promise<unknown>) => (req: Signed, res: Response) => {
-    f(person(req.uid!), req).then(v => res.json(v ?? { ok: true })).catch(e => {
+  const act = (f: (who: Caller, req: Signed, res: Response) => Promise<unknown>) => (req: Signed, res: Response) => {
+    f(person(req.uid!), req, res).then(v => res.json(v ?? { ok: true })).catch(e => {
       if (e instanceof LedgerError) return res.status({ not_found: 404, duplicate: 409, forbidden: 403, consent_required: 403, invalid: 400 }[e.code]).json({ error: e.code, message: e.message, detail: e.detail });
       if (e instanceof z.ZodError) return res.status(400).json({ error: 'invalid', message: e.issues.map(i => i.message).join('; ') });
       console.error(e); res.status(500).json({ error: 'server_error' });
@@ -129,9 +141,61 @@ ${teams.length ? `<ul class="rows">${teams.map(t => `<li><a href="/app/t/${esc(t
 <form id="mk" class="inline"><label for="nm">새 팀 공간</label><input id="nm" maxlength="60" placeholder="팀 이름" required><button class="btn" type="submit">만들기</button></form></section>
 <section class="box"><h2>내 계정 id</h2><p>팀 소유자에게 이 id를 보내면 그 팀이 이 계정으로 초대를 보냅니다. 초대는 이 페이지의 받은 초대에 뜨고, 내가 수락해야 들어갑니다.</p>
 <p class="inline"><code id="myid">${esc(uid)}</code><button class="btn" id="cp" type="button">복사</button></p></section>
+<section class="box"><h2>내 기록과 계정</h2>
+${ledger ? `<p>내 개인 원장을 언제든 CSV로 내려받을 수 있습니다.</p><p class="inline">${EXPORTS.map(f => `<a class="btn" href="/app/export/${f}" download>${f} 내려받기</a>`).join('')}</p>` : ''}
+<p><a href="/app/account">계정 삭제</a> <span class="note">지우기 전에 무엇이 지워지고 무엇이 팀에 남는지 먼저 보여 줍니다.</span></p></section>
 </main>`, `
 $('mk').onsubmit = e => { e.preventDefault(); api('POST', '/app/api/spaces', { name: $('nm').value }).then(s => { location.href = '/app/t/' + s.id; }).catch(err); };
 $('cp').onclick = () => copy($('myid'), $('cp'));`);
+  });
+
+  // ---------------------------------------------------------------- my own ledger out, and my account gone (5.4)
+  r.get('/export/:file', signed(false), async (req: Signed & { params: Record<string, string> }, res) => {
+    const f = req.params.file;
+    if (!ledger || !(EXPORTS as readonly string[]).includes(f)) return res.status(404).type('text/plain').send('not found');
+    const out = await ledger.exportCsv(req.uid!);
+    res.set('Cache-Control', 'no-store').set('Content-Disposition', `attachment; filename="${f}"`).type('text/csv; charset=utf-8')
+      .send(f === 'wbs.csv' ? out.wbs : out.events);
+  });
+
+  // What goes, what stays with the teams, and what must be settled first; then the person types the phrase and confirms.
+  r.get('/account', signed(false), async (req: Signed, res) => {
+    const uid = req.uid!, who = person(uid), [name, plan, { teams }] = await Promise.all([nameOf(uid), spaces.deletionPlan(uid), mySpaces(who)]);
+    const teamName = new Map(teams.map(t => [t.id, t.name])), label = (id: string) => esc(teamName.get(id) ?? id);
+    const list = (items: string[]) => `<ul class="lines">${items.map(x => `<li>${x}</li>`).join('')}</ul>`;
+    const blocked = plan.blocks.length > 0, host = cfg.host.sessionUrl ? cfg.host.name : '';
+    page(res, '계정 삭제', `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p>
+<h1>계정 삭제</h1>
+<p class="sub">지우면 되돌릴 수 없습니다. 필요한 기록은 먼저 내려받으세요.</p>
+<div id="acct" class="stack">
+${ledger ? `<section class="box"><h2>먼저 내려받기</h2><p class="inline">${EXPORTS.map(f => `<a class="btn" href="/app/export/${f}" download>${f} 내려받기</a>`).join('')}</p></section>` : ''}
+<section class="box"><h2>지워지는 것</h2>${list([
+      '내 개인 원장의 행과 변경 기록, 받은편지함',
+      '성향 점수와 이 허브에 저장된 내 이름',
+      '누가 내 행을 봤는지 남은 열람 기록',
+      '연결한 에이전트의 권한: 이미 발급된 토큰과 다른 기기의 로그인도 바로 끊깁니다',
+    ])}<p class="note">계정의 데이터 키를 먼저 지우므로, 저장된 사본도 그 순간부터 읽을 수 없습니다.</p></section>
+<section class="box"><h2>팀 공간</h2>
+${plan.deletes.length ? `<h3>함께 지워지는 팀</h3><p class="note">나 혼자 있는 팀입니다.</p>${list(plan.deletes.map(label))}` : ''}
+${plan.leaves.length ? `<h3>나가는 팀</h3>${list(plan.leaves.map(s => `${label(s.id)} <span class="chip">${ROLE[s.role] ?? esc(s.role)}</span>`))}
+<p class="note">내 카드는 지워지고 내가 한 에이전트 위임은 멈춥니다. 헌장 동의, 승인 결정, 계획의 담당 표시는 팀 기록으로 남고 이름 대신 계정 id로 보입니다.</p>` : ''}
+${blocked ? `<h3>먼저 정리할 팀</h3>${list(plan.blocks.map(b => `<a href="/app/t/${esc(b.id)}">${label(b.id)}</a> <span class="note">나 말고 ${b.people}명</span>`))}
+<p class="warn">내가 소유한 팀에 다른 사람이 있으면 계정을 지울 수 없습니다. 팀 화면에서 멤버에게 소유자를 넘기거나 팀을 지운 뒤 다시 오세요.</p>` : ''}
+${!plan.deletes.length && !plan.leaves.length && !blocked ? '<p>속한 팀 공간이 없습니다.</p>' : ''}</section>
+${host ? `<section class="box"><h2>${esc(host)} 회원</h2><p>이 허브는 ${esc(host)}의 로그인 계정과 회원 등록을 지우지 않습니다. 그것도 없애려면 ${esc(host)}에서 따로 탈퇴하세요.</p></section>` : ''}
+<section class="box"><h2>지우기</h2><form id="del" class="stack">
+${plan.leaves.length ? `<label class="ck"><input type="checkbox" id="ws"> 나가는 팀에 공유했던 내 행 사본도 지웁니다</label>
+<p class="note">체크하지 않으면 공유했던 행은 팀의 계획 대비 실적에 고정된 사본으로 남습니다.</p>` : ''}
+<label for="cf">확인하려면 <b>${DELETE_PHRASE}</b>라고 입력하세요</label><input id="cf" autocomplete="off"${blocked ? ' disabled' : ''}>
+<p><button class="btn danger" id="go" type="submit" disabled>계정 삭제</button></p><p class="err" id="err" role="alert"></p></form></section>
+</div></main>`, `
+const PHRASE = ${js(DELETE_PHRASE)}, input = $('cf'), go = $('go');
+input.oninput = () => { go.disabled = input.value.trim() !== PHRASE; };
+$('del').onsubmit = e => { e.preventDefault(); if (go.disabled) return; go.disabled = true;
+  api('POST', '/app/api/account/delete', { confirm: input.value.trim(), with_shared: !!($('ws') && $('ws').checked) }).then(() => {
+    $('acct').innerHTML = '<section class="box"><h2>계정을 지웠습니다</h2><p>로그인에 쓰던 계정 자체는 그대로라서, 다시 로그인하면 빈 새 계정으로 시작합니다.</p><p><a class="btn" href="/app">처음으로</a></p></section>';
+    document.querySelector('.top .me').textContent = ''; $('out').hidden = true; $('acct').querySelector('a').focus();
+  }).catch(e => { go.disabled = false; err(e); }); };`);
   });
 
   // ---------------------------------------------------------------- an invitation, answered by the person (5.3)
@@ -209,12 +273,18 @@ ${ch.proposal ? `<div class="prop"><p><b>${ch.proposal.version}판 제안</b>${c
 ${myAnswer(ch.proposal) || (ch.proposal.objected as string[]).includes(uid) ? `<p class="inline"><button class="btn primary" data-consent="${ch.proposal.version}" data-agree="1" type="button">동의</button><button class="btn" data-consent="${ch.proposal.version}" data-agree="0" type="button">반대</button></p>` : '<p class="note">이 제안에 동의했습니다.</p>'}</div>` : `
 <details><summary>새 헌장 제안</summary><form id="pp" class="stack"><label for="pl">한 줄에 하나씩, 9줄까지</label><textarea id="pl" rows="6" required></textarea><input id="pn" maxlength="200" placeholder="바꾸는 이유(선택)"><button class="btn" type="submit">제안하기</button></form></details>`}
 </section>`;
-    const others = members.filter(m => m.role !== 'owner');
+    const others = members.filter(m => m.role !== 'owner'), heirs = members.filter(m => m.role === 'member');
+    // the owner hands the team over (then can leave it, or delete the account) or deletes it (5.4)
+    const ownerTools = !owner ? '' : `<details><summary>소유자 넘기기</summary>
+${heirs.length ? `<form id="tf" class="inline"><select id="tfu" aria-label="새 소유자">${heirs.map(m => `<option value="${esc(m.uid)}">${esc(names.get(m.uid))}</option>`).join('')}</select><button class="btn" type="submit" id="tfb">넘기기</button></form>
+<p class="note">넘기면 나는 멤버가 되고, 구성원 관리·초대·에이전트 위임은 새 소유자가 합니다. 게스트에게는 넘길 수 없습니다.</p>` : '<p class="note">넘길 멤버가 없습니다. 게스트는 소유자가 될 수 없습니다.</p>'}</details>
+<details><summary>팀 삭제</summary><p class="note">이 팀의 계획, 헌장, 공유된 행 사본, 카드, 초대, 에이전트 위임이 모두 지워지고 되돌릴 수 없습니다. 구성원 각자의 개인 원장은 그대로입니다.</p>
+<form id="td" class="stack"><label for="tdn">확인하려면 팀 이름 <b>${esc(me.name)}</b>을 입력하세요</label><input id="tdn" autocomplete="off"><p><button class="btn danger" id="tdb" type="submit" disabled>팀 삭제</button></p></form></details>`;
     const membersHtml = me.role === 'guest' ? '' : `<section class="box"><h2>구성원</h2><ul class="rows">${members.map(m => `<li><b>${esc(names.get(m.uid))}</b> <span class="chip">${ROLE[m.role]}</span>${m.projects?.length ? ` <span class="note">${esc(m.projects.join(', '))}</span>` : ''}
 ${owner && m.uid !== uid ? ` <button class="link" data-remove="${esc(m.uid)}" type="button">내보내기</button>` : ''}</li>`).join('')}</ul>
 ${owner ? (others.length ? `<details><summary>역할 바꾸기</summary><form id="rc" class="inline"><select id="rcu" aria-label="구성원">${others.map(m => `<option value="${esc(m.uid)}">${esc(names.get(m.uid))}</option>`).join('')}</select>
-<select id="rcr" aria-label="역할"><option value="member">멤버</option><option value="guest">게스트</option></select><input id="rcp" aria-label="게스트 프로젝트" placeholder="게스트 프로젝트(예: 2026:4.3)"><button class="btn" type="submit">바꾸기</button></form></details>` : '')
-  : `<p><button class="link" id="leave" type="button">이 팀에서 나가기</button></p>`}</section>`;
+<select id="rcr" aria-label="역할"><option value="member">멤버</option><option value="guest">게스트</option></select><input id="rcp" aria-label="게스트 프로젝트" placeholder="게스트 프로젝트(예: 2026:4.3)"><button class="btn" type="submit">바꾸기</button></form></details>` : '') + ownerTools
+  : `<p><button class="link" id="leave" type="button">이 팀에서 나가기</button></p>`}<p class="err" id="terr" role="alert"></p></section>`;
     // invitations (5.3): the owner hands a one-time link to one person or invites an account; joining is theirs to do
     const sent = owner ? await spaces.invites(who, id) : [];
     const sentNames = await namesOf(sent.flatMap(i => i.status === 'joined' ? [i.who!] : []));
@@ -272,6 +342,14 @@ if ($('inv')) {
   $('iacc').onclick = () => { const u = $('iu').value.trim(); if (!u) { $('iu').focus(); return; } api('POST', base + '/invites', { ...body(), for: u }).then(reload).catch(err); };
 }
 document.querySelectorAll('[data-revoke]').forEach(b => { b.onclick = () => api('DELETE', base + '/invites/' + encodeURIComponent(b.dataset.revoke)).then(reload).catch(err); });
+const terr = e => { $('terr').textContent = e.message; };
+if ($('tf')) $('tf').onsubmit = e => { e.preventDefault(); const b = $('tfb');
+  if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 넘깁니다'; return; }
+  api('POST', base + '/transfer', { to: $('tfu').value }).then(reload).catch(terr); };
+if ($('td')) { const n = $('tdn'), b = $('tdb'), want = ${js(me.name)};
+  n.oninput = () => { b.disabled = n.value.trim() !== want; };
+  $('td').onsubmit = e => { e.preventDefault(); if (b.disabled) return; b.disabled = true;
+    api('POST', base + '/delete', { name: n.value.trim() }).then(() => { location.href = '/app'; }).catch(x => { b.disabled = false; terr(x); }); }; }
 if ($('leave')) $('leave').onclick = () => { const b = $('leave'); if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 나갑니다(공유한 행은 팀에 고정된 사본으로 남음)'; return; } api('POST', base + '/leave').then(() => { location.href = '/app'; }).catch(err); };
 if ($('card')) $('card').onsubmit = e => { e.preventDefault();
   const v = id => ($(id) || {}).value || '', sections = [...document.querySelectorAll('input[name=sec]:checked')].map(x => x.value);
@@ -338,6 +416,20 @@ document.querySelectorAll('[data-week]').forEach(b => { b.onclick = () => { cons
   api.post('/join', act((who, req) => spaces.join(who, refOf(req.body), req.body?.agree === undefined ? undefined : Number(req.body.agree))));
   api.post('/join/decline', act((who, req) => spaces.decline(who, refOf(req.body))));
   api.post('/t/:space/leave', act((who, req) => spaces.removeMember(who, sp(req), (who as { uid: string }).uid)));
+  api.post('/t/:space/transfer', act((who, req) => spaces.transfer(who, sp(req), String(req.body?.to || ''))));
+  api.post('/t/:space/delete', act(async (who, req) => {   // the team's name, typed: deleting a team is never one stray click
+    const s = (await spaces.list(who)).find(x => x.id === sp(req)) as { name?: string } | undefined;
+    if (!s || String(req.body?.name ?? '').trim() !== s.name) throw new LedgerError('invalid', 'Type the team\'s name to delete it');
+    return spaces.remove(who, sp(req));
+  }));
+  // the account (5.4): the person's own act, on this page only; the tombstone stops every earlier token and session
+  api.post('/account/delete', act(async (who, req, res) => {
+    if (String(req.body?.confirm ?? '').trim() !== DELETE_PHRASE) throw new LedgerError('invalid', `Type "${DELETE_PHRASE}" to delete the account`);
+    const out = await spaces.deleteAccount(req.uid!, { withShared: req.body?.with_shared === true });
+    revocations?.note(req.uid!, out.at);
+    setCookie(res, '', 0);
+    return out;
+  }));
   api.post('/t/:space/card', act((who, req) => cards.publish(who, sp(req), req.body)));
   api.delete('/t/:space/card', act((who, req) => cards.withdraw(who, sp(req))));
   api.get('/t/:space/cards', act((who, req) => cards.list(who, sp(req))));
@@ -432,6 +524,7 @@ h2 { font-size: 16px; margin: 0 0 8px } h3 { font-size: 15px; margin: 0 0 8px } 
 .stack { display: grid; gap: 8px } .inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
 .btn { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; padding: 0 14px; font: inherit; display: inline-flex; align-items: center; text-decoration: none }
 .btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600 }
+.btn.danger { background: var(--warn); color: var(--on-accent); border-color: var(--warn); font-weight: 600 } .btn:disabled { opacity: .45; cursor: not-allowed }
 .link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 4px; min-height: 32px }
 input, textarea, select { font: inherit; min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); padding: 6px 10px; width: 100%; min-width: 0 }
 .inline input { width: auto; flex: 1 1 180px } .inline select { width: auto } textarea { min-height: 120px }

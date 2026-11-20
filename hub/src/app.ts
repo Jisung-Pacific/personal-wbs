@@ -21,6 +21,7 @@ import { clientAddress } from './net.js';
 import { Briefs } from './wbs/weekly.js';
 import { MasterAgent } from './wbs/master.js';
 import { googleScheduler, type VerifyScheduler } from './auth/scheduler.js';
+import { Revocations } from './auth/revocations.js';
 
 export const VERSION = '0.1.0';
 
@@ -29,8 +30,9 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   const app = express(), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views), inbox = new Inbox(store), u = cfg.publicUrl;
   const cards = new Cards(store, spaces, views);   // after Plans: both hook into a person leaving a space
   const briefs = new Briefs(store, spaces);
-  const master = new MasterAgent(store, spaces, plans);
+  const master = new MasterAgent(store, spaces, plans);   // after Cards: its hook also runs when a person leaves a space
   const ledger = new Ledger(store, (uid, keys) => plans.touched(uid, keys));   // shared copies follow the rows they come from
+  const revocations = new Revocations(store);   // a deleted account's earlier tokens and sessions stop at once (5.4)
   app.disable('x-powered-by');
   app.set('trust proxy', 1);   // Cloud Run's front end sets X-Forwarded-For; the rate limiter keys on the caller
   app.use((req, _res, next) => { (req as typeof req & { client?: string }).client = clientAddress(req, cfg.proxySecret); next(); });
@@ -54,7 +56,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   app.get(['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'], (_req, res) => { res.json(serverMetadata(cfg)); });
   app.get('/.well-known/jwks.json', (_req, res) => { res.set('Cache-Control', 'public, max-age=300').json(issuer.jwks()); });
   app.use('/oauth', oauthRouter({ cfg, store, issuer, verifyIdToken, joinHost }));
-  app.use('/app', peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master }));   // people's own acts, by their own hand
+  app.use('/app', peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master, ledger, revocations }));   // people's own acts, by their own hand
 
   /** Bearer check for one resource: a valid hub token minted for it (or for the hub as a whole). `path`: mcp, v1, or a
    *  team's own MCP address (mcp/t/<space id>). */
@@ -64,6 +66,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
     if (!m) return res.status(401).set('WWW-Authenticate', challenge()).json({ error: 'unauthorized' });
     try {
       const c = await issuer.verify(m[1], [`${u}/${path}`, u]);
+      if (await revocations.revoked(c.uid, c.iat)) throw new Error('account deleted');
       req.actor = { uid: c.uid, clientName: c.clientName || c.clientId };
       req.scopes = c.scopes;
       (req as Authed & { auth?: unknown }).auth = { token: m[1], clientId: c.clientId, scopes: c.scopes, expiresAt: c.exp, resource: new URL(c.resource) };
@@ -104,7 +107,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
     const m = /^Bearer (.+)$/i.exec(req.get('authorization') || '');
     if (!m) return res.status(401).set('WWW-Authenticate', challenge()).json({ error: 'unauthorized' });
     let c: Awaited<ReturnType<TokenIssuer['verify']>>;
-    try { c = await issuer.verify(m[1], [resource]); } catch { return res.status(401).set('WWW-Authenticate', challenge(', error="invalid_token"')).json({ error: 'invalid_token' }); }
+    try { c = await issuer.verify(m[1], [resource]); if (await revocations.revoked(c.uid, c.iat)) throw new Error('account deleted'); } catch { return res.status(401).set('WWW-Authenticate', challenge(', error="invalid_token"')).json({ error: 'invalid_token' }); }
     if (!(await master.active(space, c.clientId))) return res.status(401).set('WWW-Authenticate', challenge(', error="invalid_token"')).json({ error: 'invalid_token', message: 'The team\'s owner stopped this delegation' });
     req.actor = { uid: c.uid, clientName: c.clientName || c.clientId }; req.scopes = c.scopes;
     req.teamAgent = { space, client: c.clientName || c.clientId, clientId: c.clientId };

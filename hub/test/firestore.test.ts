@@ -133,3 +133,20 @@ test('Firestore store: invitations — a link found by its hash and used once un
   assert.equal(await store.inviteByHash(sha(l2.code!)), null);
   assert.deepEqual(await store.invitesFor(a2.for!), []);
 });
+
+test('Firestore store: deleting an account leaves a hashed tombstone and takes its refresh tokens, ledger and invitation list', { skip: !on }, async () => {
+  const { Spaces } = await import('../src/wbs/spaces.js'), { person } = await import('../src/wbs/access.js');
+  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), ledger = new Ledger(store), spaces = new Spaces(store);
+  const n = Date.now(), a = `u_a${n}`, o = `u_o${n}`;
+  await ledger.add({ uid: a, clientName: 'Claude' }, { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: '지워질 개인 원장 행', start: '2026-11-20', status: '진행 중' });
+  for (const h of ['ra', 'rb']) await store.putRefresh({ hash: `${h}${n}`, family: `f${h}${n}`, client_id: 'c', client_name: 'Claude', uid: a, scope: 'wbs.read', resource: 'r', expires_at: n + 60e3, used: false });
+  const s = await spaces.create(person(o), '초대한 팀'); await spaces.invite(person(o), s.id, { role: 'member', for: a });
+  assert.equal(await store.deletedAt(a), null);
+  const out = await spaces.deleteAccount(a, { now: n });
+  assert.equal(out.at, n); assert.equal(await store.deletedAt(a), n);
+  const tomb = await (store as unknown as { db: { collection(c: string): { doc(id: string): { get(): Promise<{ exists: boolean; data(): Record<string, unknown> }> } } } }).db
+    .collection('deleted_accounts').doc(createHash('sha256').update(a).digest('hex')).get();
+  assert.ok(tomb.exists); assert.deepEqual(Object.keys(tomb.data()).sort(), ['at', 'expire'], 'the plain account id is not stored');
+  assert.equal(await store.useRefresh(`ra${n}`), null); assert.equal(await store.useRefresh(`rb${n}`), null);
+  assert.deepEqual(await store.rows(a), []); assert.deepEqual(await store.invitesFor(a), []);
+});

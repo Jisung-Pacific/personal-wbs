@@ -106,6 +106,9 @@ export class MemoryStore implements Store {
     this.dropOwner(uid); this.byUser.delete(uid);   // invitations waiting for the account go with its own list
     for (const [h, r] of this.refresh) if (r.uid === uid) this.refresh.delete(h);
   }
+  private tombs = new Map<string, number>();
+  async markDeleted(uid: string, at: number) { this.tombs.set(uid, at); }
+  async deletedAt(uid: string) { return this.tombs.get(uid) ?? null; }
   /** Everything kept under one ledger owner: its rows and history, inbox, secrets and (for an account) its plan links. */
   private dropOwner(owner: string) {
     this.ledgers.delete(owner); this.boxes.delete(owner); this.linkOf.delete(owner); this.viewLog.delete(owner);
