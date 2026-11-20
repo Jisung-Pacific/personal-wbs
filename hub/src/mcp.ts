@@ -98,9 +98,10 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
     if (plans) server.registerTool('wbs_plan', {
       title: 'Read a team plan against the actual work',
       description: 'The team space\'s plan (its project WBS: scope, deliverable, done criterion, prerequisites, owners, planned dates) set against the work members linked to it from their own ledgers: per item the shared rows, how many are done, the state and dates they show, days late against the due date, and flags (late, in progress with no work, plan done with work open, work done with the plan open, work started on a parked item, waiting). view "items" gives the plan items with their change log instead; view "alignment" sets the team\'s intents (why, what, how, ranked) against where the shared work actually goes: per intent its plan items and work share, flags (no plan, no work, less work than a lower-ranked intent), plan items serving no intent, and per person (owners and members see each other\'s, symmetrically). Members see who did the work; guests see their projects only and no alignment.',
-      inputSchema: { space: teamSpace, view: z.enum(['actual', 'items', 'alignment']).optional().describe('actual (default): plan vs actual; items: the plan items; alignment: intents vs work'), year: z.string().regex(/^\d{4}$/).optional() },
+      inputSchema: { space: teamSpace, view: z.enum(['actual', 'items', 'alignment', 'csv']).optional().describe('actual (default): plan vs actual; items: the plan items; alignment: intents vs work; csv: the plan as plan.csv with its manifest (bytes, sha, at), for the copy the team keeps where it chooses (a Drive folder, a repository) — write the csv text as it comes'), year: z.string().regex(/^\d{4}$/).optional() },
       annotations: ro,
-    }, async a => run(() => a.view === 'items' ? plans.list(caller, sp(a.space), a.year) : a.view === 'alignment' ? plans.align(caller, sp(a.space)) : plans.actual(caller, sp(a.space), a.year)));
+    }, async a => run(() => a.view === 'items' ? plans.list(caller, sp(a.space), a.year) : a.view === 'alignment' ? plans.align(caller, sp(a.space))
+      : a.view === 'csv' ? plans.exportCsv(caller, sp(a.space), a.year) : plans.actual(caller, sp(a.space), a.year)));
     if (plans) server.registerTool('wbs_shared', {
       title: 'List what you share with teams',
       description: 'Your rows that are linked to team plan items: which plan item each serves, which fields the team sees, and whether the team still receives them. pending: recorded through a team connection and waiting for its plan item (nothing reaches the team yet). On a team connection, only the rows of that team.',
@@ -253,9 +254,10 @@ function buildTeamAgentMcp(spaces: Spaces, scopes: string[], version: string, pl
   }, async a => run(() => briefs.weekly(caller, space, a.week)));
   server.registerTool('wbs_plan', {
     title: 'Read the team plan',
-    description: 'The plan against the actual work (default), its items with their change log (view items), or the intents against where the work goes (view alignment), without names.',
-    inputSchema: { view: z.enum(['actual', 'items', 'alignment']).optional(), year: z.string().regex(/^\d{4}$/).optional() }, annotations: ro,
-  }, async a => run(() => a.view === 'items' ? plans.list(caller, space, a.year) : a.view === 'alignment' ? plans.align(caller, space) : plans.actual(caller, space, a.year)));
+    description: 'The plan against the actual work (default), its items with their change log (view items), the intents against where the work goes (view alignment), or the plan as plan.csv with its manifest for the team\'s own copy (view csv), without names.',
+    inputSchema: { view: z.enum(['actual', 'items', 'alignment', 'csv']).optional(), year: z.string().regex(/^\d{4}$/).optional() }, annotations: ro,
+  }, async a => run(() => a.view === 'items' ? plans.list(caller, space, a.year) : a.view === 'alignment' ? plans.align(caller, space)
+    : a.view === 'csv' ? plans.exportCsv(caller, space, a.year) : plans.actual(caller, space, a.year)));
   server.registerTool('wbs_charter', {
     title: 'Read the team charter', description: 'The charter in force and any open proposal.', inputSchema: {}, annotations: ro,
   }, async () => run(() => spaces.charter(caller, space)));

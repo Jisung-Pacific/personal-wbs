@@ -56,7 +56,7 @@ export function createApp(cfg: Config, store: Store, issuer: TokenIssuer, verify
   app.get(['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'], (_req, res) => { res.json(serverMetadata(cfg)); });
   app.get('/.well-known/jwks.json', (_req, res) => { res.set('Cache-Control', 'public, max-age=300').json(issuer.jwks()); });
   app.use('/oauth', oauthRouter({ cfg, store, issuer, verifyIdToken, joinHost }));
-  app.use('/app', peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master, ledger, revocations }));   // people's own acts, by their own hand
+  app.use('/app', peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master, ledger, revocations, plans }));   // people's own acts, by their own hand
 
   /** Bearer check for one resource: a valid hub token minted for it (or for the hub as a whole). `path`: mcp, v1, or a
    *  team's own MCP address (mcp/t/<space id>). */

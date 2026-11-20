@@ -55,7 +55,8 @@ export function restRouter(ledger: Ledger, spaces: Spaces, inbox: Inbox, plans?:
     const who = (req: Authed) => agent(req.actor!.uid, req.actor!.clientName, req.scopes || []);
     const sp = (req: Authed) => String(req.query.space || ''), yr = (req: Authed) => typeof req.query.year === 'string' ? req.query.year : undefined;
     r.get('/plan', need('wbs.read'), (req: Authed, res) => send(res, () => req.query.view === 'items' ? plans.list(who(req), sp(req), yr(req))
-      : req.query.view === 'alignment' ? plans.align(who(req), sp(req)) : plans.actual(who(req), sp(req), yr(req))));
+      : req.query.view === 'alignment' ? plans.align(who(req), sp(req)) : req.query.view === 'csv' ? plans.exportCsv(who(req), sp(req), yr(req))   // 3.10: the team's CSV copy
+      : plans.actual(who(req), sp(req), yr(req))));
     r.post('/plan', need('wbs.write'), (req: Authed, res) => send(res, () => plans.put(who(req), sp(req), req.body)));
     r.get('/share', need('wbs.read'), (req: Authed, res) => send(res, () => plans.mine(who(req))));
     if (store) r.get('/team', need('wbs.read'), (req: Authed, res) => send(res, () => teamOverview(store, spaces, plans, views, who(req), sp(req), briefs, master)));
@@ -100,8 +101,8 @@ export function openapi(cfg: Config, version: string) {
       '/packages/{year}': { get: { operationId: 'listPackages', summary: 'Packages of a year and the next free codes', parameters: [{ name: 'year', in: 'path', required: true, schema: { type: 'string' } }, space], responses: { 200: { description: 'Packages' } } } },
       '/charter': { get: { operationId: 'getCharter', summary: 'A team space\'s charter: the version in force, an open proposal and who has answered, every version so far', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }], responses: { 200: { description: 'Charter' } } } },
       '/plan': {
-        get: { operationId: 'planVsActual', summary: 'A team plan against the work members linked to it (view=items: the plan items with their change log)', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' },
-          { name: 'view', in: 'query', required: false, schema: { type: 'string', enum: ['actual', 'items', 'alignment'] } }, { name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Plan vs actual' } } },
+        get: { operationId: 'planVsActual', summary: 'A team plan against the work members linked to it (view=items: the plan items with their change log; view=csv: the plan as plan.csv with its manifest, for the copy the team keeps)', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' },
+          { name: 'view', in: 'query', required: false, schema: { type: 'string', enum: ['actual', 'items', 'alignment', 'csv'] } }, { name: 'year', in: 'query', required: false, schema: { type: 'string' } }], responses: { 200: { description: 'Plan vs actual' } } },
         post: { operationId: 'putPlan', summary: 'Add or change team plan items (owners and members; permanent codes, parents first, only given fields change)', parameters: [{ ...space, required: true, description: 'A team space id from /spaces' }],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['items'], properties: { memo: { type: 'string' }, items: { type: 'array', maxItems: 200, items: { type: 'object', required: ['code'], properties: {
             code: { type: 'string' }, year: { type: 'string' }, scope: { type: 'string' }, deliverable: { type: 'string' }, done: { type: 'string' },

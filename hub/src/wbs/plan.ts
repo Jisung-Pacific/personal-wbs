@@ -15,7 +15,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { SHARE_FIELDS, type Intent, type PlanItem, type PlanLink, type Row, type ShareField, type SharedWork, type Store } from '../store/types.js';
-import { DATE_RE, STATUSES, codeKey, todayKst } from './model.js';
+import { DATE_RE, STATUSES, codeKey, toCsv, todayKst } from './model.js';
 import { LedgerError } from './service.js';
 import { callerUid, type Caller } from './access.js';
 import type { Spaces } from './spaces.js';
@@ -253,6 +253,29 @@ export class Plans {
     const e = await this.spaces.enter(caller, space, 'plan.read');
     const items = (await this.store.plan(space)).filter(visibleTo(e.projects)).filter(p => !year || p.year === year).sort(byCode);
     return { space, items: items.map(p => ({ ...p, by: e.named ? p.by : undefined, log: p.log.map(l => ({ at: l.at, change: l.change, ...(e.named ? { by: l.by, via: l.via } : {}) })) })) };
+  }
+
+  /** The plan as a CSV copy the team keeps where it chooses (execution WBS 3.10; decision 6 and intent 4: the hub holds
+   *  the original, a CSV replica of about 100 KB lives in the team's Drive or repository). One row per plan item, in code
+   *  order, with its actual work and flags; UTF-8 with a BOM, CRLF, as the ledger's files. The manifest follows the
+   *  replica rules (1.3): bytes, sha (the first 16 hex of the SHA-256 of the file), at (UTC), source, rows — so a copy can
+   *  be checked against the hub. It holds what the caller's plan view holds: a guest's copy, its projects only and no
+   *  intents. Reading the plan this way is a reading of the shared work: the people whose rows it shows see it in their
+   *  reading log. `year`: one plan year only (the manifest says which); default every year. */
+  async exportCsv(caller: Caller, space: string, year?: string) {
+    const [pa, e] = await Promise.all([this.actual(caller, space, year), this.spaces.enter(caller, space, 'plan.read')]);
+    const intents = new Map(e.relation === 'guest' ? [] : (await this.store.intents(space)).map(i => [i.id, i.why] as const));
+    const head = ['연도', '코드', '스콥', '산출물', '완료 기준', '선행', '담당', '의도', '계획 상태', '시작 예정', '마감',
+      '실적 행', '실적 완료', '실적 상태', '실적 시작', '실적 끝', '최근 진행일', '지연(일)', '표시'];
+    const cells = (a: (string | null | undefined)[]) => a.map(v => v ?? '');   // an item without work has no actual state
+    const rows = pa.items.map(r => cells([r.year, r.code, r.scope, r.deliverable, r.done, r.depends_on.join(' '),
+      r.owners.join(', '),
+      r.intent ? `${r.intent} ${intents.get(r.intent) ?? ''}`.trim() : '', r.plan.status, r.plan.start, r.plan.due,
+      String(r.actual.rows), String(r.actual.done), r.actual.status, r.actual.start, r.actual.end, r.actual.last_progress,
+      r.slip_days === null ? '' : String(r.slip_days), r.flags.map(f => FLAG_KO[f]).join(', ')]));
+    const csv = '\ufeff' + toCsv([head, ...rows]), bytes = Buffer.byteLength(csv, 'utf8');
+    return { space, file: 'plan.csv', csv,
+      manifest: { file: 'plan.csv', space, ...(year ? { year } : {}), rows: rows.length, bytes, sha: createHash('sha256').update(csv, 'utf8').digest('hex').slice(0, 16), at: new Date().toISOString(), source: 'hub' } };
   }
 
   /** Plan vs actual for the space (see planActual). The read is noted in the view log of every other person whose

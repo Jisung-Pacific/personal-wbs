@@ -17,6 +17,7 @@ import type { VerifyIdToken } from './auth/identity.js';
 import { person, type Caller } from './wbs/access.js';
 import { LedgerError, type Ledger } from './wbs/service.js';
 import type { Revocations } from './auth/revocations.js';
+import type { Plans } from './wbs/plan.js';
 import { INVITE_DAYS, MAX_PEOPLE, TITLE_MAX, type InviteRef, type Spaces } from './wbs/spaces.js';
 import { switchList } from './wbs/team.js';
 import { Cards, DEFAULT_SECTIONS, INSTRUCTIONS, MINI_IPIP, SCALE, TRAIT_KO } from './wbs/cards.js';
@@ -29,13 +30,13 @@ const js = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 const ymd = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);   // KST, like the ledger
 const SECTION_KO: Record<CardSection, string> = { ...TRAIT_KO, direction: '방향성' };
 
-export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards; master?: MasterAgent; ledger?: Ledger; revocations?: Revocations }
+export interface PeopleDeps { cfg: Config; store: Store; issuer: TokenIssuer; verifyIdToken: VerifyIdToken; spaces: Spaces; cards: Cards; master?: MasterAgent; ledger?: Ledger; revocations?: Revocations; plans?: Plans }
 /** What a person types to delete their account: a deliberate act, never one stray click. */
 const DELETE_PHRASE = '계정 삭제';
 const EXPORTS = ['wbs.csv', 'events.csv'] as const;   // one's own ledger, in the file format it came from
 type Signed = Request & { uid?: string };
 
-export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master, ledger, revocations }: PeopleDeps): Router {
+export function peopleRouter({ cfg, store, issuer, verifyIdToken, spaces, cards, master, ledger, revocations, plans }: PeopleDeps): Router {
   const r = express.Router(), secure = cfg.publicUrl.startsWith('https://'), COOKIE = secure ? '__Host-ppwbs' : 'ppwbs', origin = new URL(cfg.publicUrl).origin;
   const cookieOf = (req: Request) => (req.get('cookie') || '').split(/;\s*/).map(c => c.split('=')).find(([k]) => k === COOKIE)?.[1];
   const setCookie = (res: Response, v: string, age: number) => res.append('Set-Cookie', `${COOKIE}=${v}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`);
@@ -198,6 +199,19 @@ $('del').onsubmit = e => { e.preventDefault(); if (go.disabled) return; go.disab
   }).catch(e => { go.disabled = false; err(e); }); };`);
   });
 
+  // ---------------------------------------------------------------- the team plan's CSV copy (3.10)
+  r.get('/t/:space/plan.csv', signed(false), async (req: Signed & { params: Record<string, string> }, res) => {
+    if (!plans) return res.status(404).type('text/plain').send('not found');
+    try {
+      const out = await plans.exportCsv(person(req.uid!), req.params.space);
+      res.set('Cache-Control', 'no-store').set('Content-Disposition', 'attachment; filename="plan.csv"').type('text/csv; charset=utf-8').send(out.csv);
+    } catch (e) {
+      const code = e instanceof LedgerError ? e.code : 'error';
+      res.status(code === 'not_found' ? 404 : code === 'forbidden' ? 403 : code === 'consent_required' ? 409 : 500).type('text/plain; charset=utf-8')
+        .send(code === 'consent_required' ? '헌장이 시행되고 내가 동의한 뒤에 계획을 내려받을 수 있습니다.' : '이 계획은 내려받을 수 없습니다.');
+    }
+  });
+
   // ---------------------------------------------------------------- an invitation, answered by the person (5.3)
   // A link carries its code after '#', so it never reaches a server log or a referrer; an account invitation is named by
   // its space and id, and only its account can open it. The page reads the invitation through the API and asks.
@@ -329,9 +343,14 @@ ${owner ? `<details><summary>에이전트 위임하기</summary><p>이 주소로
 <p><a class="btn${waiting ? ' primary' : ''}" href="/app/t/${esc(id)}/agent">${waiting ? `승인할 것 ${waiting}건` : '제안과 주간 보고 보기'}</a></p></section>`;
       } catch (e) { if (!(e instanceof LedgerError)) throw e; }
     }
+    // the team plan as the team's own CSV copy (3.10): the hub holds the original; offered once the charter gate lets the
+    // person read the plan (a charter in force, agreed by owners and members), as every plan read
+    const planHtml = plans && me.charter?.in_force && !me.charter.needs_consent ? `<section class="box"><h2>팀 계획 사본</h2>
+<p>허브가 원본이고, 이 파일은 팀이 정한 곳(드라이브, 저장소)에 두는 복제본입니다. 계획 항목마다 실적과 표시를 담습니다${me.role === 'guest' ? '(배정된 프로젝트만)' : ''}.</p>
+<p><a class="btn" href="/app/t/${esc(id)}/plan.csv" download>plan.csv 내려받기</a></p></section>` : '';
     const guestHtml = me.role === 'guest' ? `<section class="box"><p>게스트로 속한 팀입니다. 배정된 프로젝트의 계획과 작업은 에이전트나 대시보드에서 봅니다.</p>${titleForm}<p class="err" id="terr" role="alert"></p></section>` : '';
     page(res, me.name, `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p>${nav}<h1>${esc(me.name)} <span class="chip">${ROLE[me.role]}</span></h1>
-${guestHtml}${charterHtml}${membersHtml}${inviteHtml}${agentHtml}${cardsHtml}</main>`, `
+${guestHtml}${charterHtml}${membersHtml}${planHtml}${inviteHtml}${agentHtml}${cardsHtml}</main>`, `
 const S = ${js(id)}, base = '/app/api/t/' + S;
 document.querySelectorAll('[data-consent]').forEach(b => { b.onclick = () => api('POST', base + '/charter/consent', { version: +b.dataset.consent, agree: b.dataset.agree === '1' }).then(reload).catch(err); });
 if ($('pp')) $('pp').onsubmit = e => { e.preventDefault(); api('POST', base + '/charter/propose', { lines: $('pl').value.split('\\n').map(s => s.trim()).filter(Boolean), note: $('pn').value }).then(reload).catch(err); };
