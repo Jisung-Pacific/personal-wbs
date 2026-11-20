@@ -43,7 +43,8 @@ const expire = (ms: number) => Timestamp.fromMillis(ms);
 const TOMBSTONE_MS = 31 * 86400e3;   // far past every credential minted before it (access 1 h, session 8 h; refresh tokens are deleted)
 const SPACE_OWNER_RE = /^spaces\/s_[A-Za-z0-9_-]{22}$/;
 
-/** A membership as stored: role, since, by, and a guest's projects ("YYYY:<package code>", plaintext like a row's code). */
+/** A membership as stored: role, since, by, and a guest's projects ("YYYY:<package code>", plaintext like a row's code).
+ *  A display title (3.9) is not here: access checks never need it, so it is sealed (FirestoreStore.openMember). */
 const memberOf = (uid: string, d: Record<string, unknown>): Membership =>
   ({ uid, role: d.role as SpaceRole, since: d.since as number, by: d.by as string, ...(Array.isArray(d.projects) ? { projects: d.projects as string[] } : {}) });
 
@@ -229,15 +230,21 @@ export class FirestoreStore implements Store {
   }
   async membership(id: string, uid: string): Promise<Membership | null> {
     const d = await this.memberDoc(id, uid).get();
-    return d.exists ? memberOf(uid, d.data()!) : null;
+    return d.exists ? this.openMember(id, uid, d.data()!) : null;
   }
   async members(id: string): Promise<Membership[]> {
     const s = await this.spaceDoc(id).collection('members').get();
-    return s.docs.map(d => memberOf(d.id, d.data()));
+    return Promise.all(s.docs.map(d => this.openMember(id, d.id, d.data())));
+  }
+  /** The plain fields, and the display title opened with the space's key (bound to the member's path). */
+  private async openMember(id: string, uid: string, d: Record<string, unknown>): Promise<Membership> {
+    const m = memberOf(uid, d);
+    if (d.enc) { const { title } = await this.envelope.open<{ title?: string }>(spaceOwner(id), `members/${uid}`, d.enc as Sealed); if (title) m.title = title; }
+    return m;
   }
   async putMember(id: string, m: Membership) {
-    const b = this.db.batch();
-    b.set(this.memberDoc(id, m.uid), { role: m.role, since: m.since, by: m.by, ...(m.projects ? { projects: m.projects } : {}) });
+    const b = this.db.batch(), enc = m.title ? { enc: await this.envelope.seal(spaceOwner(id), `members/${m.uid}`, { title: m.title }) } : {};
+    b.set(this.memberDoc(id, m.uid), { role: m.role, since: m.since, by: m.by, ...(m.projects ? { projects: m.projects } : {}), ...enc });
     b.set(this.indexDoc(m.uid, id), { role: m.role, since: m.since });
     await b.commit();
   }

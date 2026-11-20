@@ -54,7 +54,7 @@ export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, v
     charter: charter && { in_force: charter.in_force?.version ?? null,   // getting here means the caller agreed to it (the gate)
       proposal: charter.proposal ? { version: charter.proposal.version,
         needs_my_answer: !!uid && Array.isArray(charter.proposal.waiting) && (charter.proposal.waiting as string[]).includes(uid) } : null },
-    members: members && members.map(m => ({ uid: m.uid, role: m.role, since: m.since, ...(m.projects ? { projects: m.projects } : {}) })),
+    members: members && members.map(m => ({ uid: m.uid, role: m.role, since: m.since, ...(m.projects ? { projects: m.projects } : {}), ...(m.title ? { title: m.title } : {}) })),   // a title is for display (3.9)
     plan: pva,
     alignment,
     weekly,

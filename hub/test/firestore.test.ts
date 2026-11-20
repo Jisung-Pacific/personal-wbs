@@ -150,3 +150,19 @@ test('Firestore store: deleting an account leaves a hashed tombstone and takes i
   assert.equal(await store.useRefresh(`ra${n}`), null); assert.equal(await store.useRefresh(`rb${n}`), null);
   assert.deepEqual(await store.rows(a), []); assert.deepEqual(await store.invitesFor(a), []);
 });
+
+test('Firestore store: a display title is sealed under the space key and survives a hand-over', { skip: !on }, async () => {
+  const { Spaces } = await import('../src/wbs/spaces.js'), { person } = await import('../src/wbs/access.js');
+  const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store);
+  const n = Date.now(), o = `u_o${n}`, m = `u_m${n}`;
+  const s = await spaces.create(person(o), '직함 팀');
+  const inv = await spaces.invite(person(o), s.id, { role: 'member', for: m });
+  await spaces.join(person(m), { space: s.id, invite: inv.id });
+  await spaces.setTitle(person(m), s.id, m, '공동 창업자');
+  const raw = (await (store as unknown as { db: { collection(c: string): { doc(id: string): { collection(c: string): { doc(id: string): { get(): Promise<{ data(): Record<string, unknown> }> } } } } } }).db
+    .collection('spaces').doc(s.id.replace(/^spaces\//, '')).collection('members').doc(m).get()).data();
+  assert.ok(raw.enc); assert.equal(JSON.stringify(raw).includes('공동 창업자'), false, 'the title is not stored in the clear');
+  await spaces.transfer(person(o), s.id, m);
+  assert.equal((await store.membership(s.id, m))?.title, '공동 창업자');
+  assert.equal((await store.members(s.id)).find(x => x.uid === m)?.role, 'owner');
+});

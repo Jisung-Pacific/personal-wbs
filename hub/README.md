@@ -92,6 +92,10 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   in with the same accounts as the consent page. The hub keeps a first-party session in an HttpOnly, SameSite=Strict
   cookie, accepts changes only with the pages' own request header from this origin, and an agent's access token opens
   none of it.
+- **Display titles** (execution WBS 3.9): words beside a name (대표, 공동 창업자, 연구원, 자문), at most 30 characters,
+  that grant nothing: the role decides what a person sees and does. Each person sets their own on the team page and the
+  owner may set or clear anyone's; agents never do. A title survives role changes and a hand-over, goes when the person
+  leaves, is sealed under the space's key in Firestore, and reaches agents in `wbs_team`.
 - **Deleting an account** (execution WBS 5.4): a person downloads their own `wbs.csv` and `events.csv` from `/app`, sees
   what deleting would do (the teams that go with the account, the ones it leaves, the ones it owns with others that
   must be handed over or deleted first), types `계정 삭제` and confirms; no agent can. The hub then writes a tombstone

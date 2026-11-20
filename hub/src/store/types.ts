@@ -115,7 +115,9 @@ export interface ViewEntry {
 }
 
 /** `projects`: for a guest, the projects (packages, as "YYYY:<code>", e.g. "2026:4.3") whose plan and work it may read. */
-export interface Membership { uid: string; role: SpaceRole; since: number; by: string; projects?: string[] }
+/** `title`: words shown beside the name (execution WBS 3.9; the strategy's decision 7: titles are for display, roles
+ *  carry the permissions). Never consulted by an access check; sealed under the space's key where the store encrypts. */
+export interface Membership { uid: string; role: SpaceRole; since: number; by: string; projects?: string[]; title?: string }
 
 /** An invitation to a team space (execution WBS 5.3). A person joins a team only by accepting one, by their own hand, so
  *  one account can belong to several teams without anyone adding it. A link invitation carries a one-time code that the

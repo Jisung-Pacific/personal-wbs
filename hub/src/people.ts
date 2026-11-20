@@ -17,7 +17,7 @@ import type { VerifyIdToken } from './auth/identity.js';
 import { person, type Caller } from './wbs/access.js';
 import { LedgerError, type Ledger } from './wbs/service.js';
 import type { Revocations } from './auth/revocations.js';
-import { INVITE_DAYS, MAX_PEOPLE, type InviteRef, type Spaces } from './wbs/spaces.js';
+import { INVITE_DAYS, MAX_PEOPLE, TITLE_MAX, type InviteRef, type Spaces } from './wbs/spaces.js';
 import { switchList } from './wbs/team.js';
 import { Cards, DEFAULT_SECTIONS, INSTRUCTIONS, MINI_IPIP, SCALE, TRAIT_KO } from './wbs/cards.js';
 import type { MasterAgent } from './wbs/master.js';
@@ -274,15 +274,20 @@ ${myAnswer(ch.proposal) || (ch.proposal.objected as string[]).includes(uid) ? `<
 <details><summary>새 헌장 제안</summary><form id="pp" class="stack"><label for="pl">한 줄에 하나씩, 9줄까지</label><textarea id="pl" rows="6" required></textarea><input id="pn" maxlength="200" placeholder="바꾸는 이유(선택)"><button class="btn" type="submit">제안하기</button></form></details>`}
 </section>`;
     const others = members.filter(m => m.role !== 'owner'), heirs = members.filter(m => m.role === 'member');
+    // display titles (3.9): words beside a name; the role, not the title, decides what one sees and does
+    const myTitle = (await store.membership(id, uid))?.title ?? '';
+    const titleForm = `<details><summary>내 직함</summary><form id="tt" class="inline"><input id="ttv" maxlength="${TITLE_MAX}" aria-label="내 직함" value="${esc(myTitle)}" placeholder="예: 공동 창업자, 연구원"><button class="btn" type="submit">저장</button></form>
+<p class="note">직함은 이름 옆에 보이는 말일 뿐이고, 볼 수 있는 것과 할 수 있는 것은 역할이 정합니다. 비우고 저장하면 지워집니다.</p></details>`;
     // the owner hands the team over (then can leave it, or delete the account) or deletes it (5.4)
-    const ownerTools = !owner ? '' : `<details><summary>소유자 넘기기</summary>
+    const ownerTools = !owner ? '' : `${others.length ? `<details><summary>구성원 직함</summary><form id="tto" class="inline"><select id="ttu" aria-label="구성원">${others.map(m => `<option value="${esc(m.uid)}" data-title="${esc(m.title ?? '')}">${esc(names.get(m.uid))}</option>`).join('')}</select><input id="ttw" maxlength="${TITLE_MAX}" aria-label="직함" placeholder="예: 공동 창업자"><button class="btn" type="submit">저장</button></form></details>` : ''}
+<details><summary>소유자 넘기기</summary>
 ${heirs.length ? `<form id="tf" class="inline"><select id="tfu" aria-label="새 소유자">${heirs.map(m => `<option value="${esc(m.uid)}">${esc(names.get(m.uid))}</option>`).join('')}</select><button class="btn" type="submit" id="tfb">넘기기</button></form>
 <p class="note">넘기면 나는 멤버가 되고, 구성원 관리·초대·에이전트 위임은 새 소유자가 합니다. 게스트에게는 넘길 수 없습니다.</p>` : '<p class="note">넘길 멤버가 없습니다. 게스트는 소유자가 될 수 없습니다.</p>'}</details>
 <details><summary>팀 삭제</summary><p class="note">이 팀의 계획, 헌장, 공유된 행 사본, 카드, 초대, 에이전트 위임이 모두 지워지고 되돌릴 수 없습니다. 구성원 각자의 개인 원장은 그대로입니다.</p>
 <form id="td" class="stack"><label for="tdn">확인하려면 팀 이름 <b>${esc(me.name)}</b>을 입력하세요</label><input id="tdn" autocomplete="off"><p><button class="btn danger" id="tdb" type="submit" disabled>팀 삭제</button></p></form></details>`;
-    const membersHtml = me.role === 'guest' ? '' : `<section class="box"><h2>구성원</h2><ul class="rows">${members.map(m => `<li><b>${esc(names.get(m.uid))}</b> <span class="chip">${ROLE[m.role]}</span>${m.projects?.length ? ` <span class="note">${esc(m.projects.join(', '))}</span>` : ''}
+    const membersHtml = me.role === 'guest' ? '' : `<section class="box"><h2>구성원</h2><ul class="rows">${members.map(m => `<li><b>${esc(names.get(m.uid))}</b>${m.title ? ` <span class="ttl">${esc(m.title)}</span>` : ''} <span class="chip">${ROLE[m.role]}</span>${m.projects?.length ? ` <span class="note">${esc(m.projects.join(', '))}</span>` : ''}
 ${owner && m.uid !== uid ? ` <button class="link" data-remove="${esc(m.uid)}" type="button">내보내기</button>` : ''}</li>`).join('')}</ul>
-${owner ? (others.length ? `<details><summary>역할 바꾸기</summary><form id="rc" class="inline"><select id="rcu" aria-label="구성원">${others.map(m => `<option value="${esc(m.uid)}">${esc(names.get(m.uid))}</option>`).join('')}</select>
+${titleForm}${owner ? (others.length ? `<details><summary>역할 바꾸기</summary><form id="rc" class="inline"><select id="rcu" aria-label="구성원">${others.map(m => `<option value="${esc(m.uid)}">${esc(names.get(m.uid))}</option>`).join('')}</select>
 <select id="rcr" aria-label="역할"><option value="member">멤버</option><option value="guest">게스트</option></select><input id="rcp" aria-label="게스트 프로젝트" placeholder="게스트 프로젝트(예: 2026:4.3)"><button class="btn" type="submit">바꾸기</button></form></details>` : '') + ownerTools
   : `<p><button class="link" id="leave" type="button">이 팀에서 나가기</button></p>`}<p class="err" id="terr" role="alert"></p></section>`;
     // invitations (5.3): the owner hands a one-time link to one person or invites an account; joining is theirs to do
@@ -324,7 +329,7 @@ ${owner ? `<details><summary>에이전트 위임하기</summary><p>이 주소로
 <p><a class="btn${waiting ? ' primary' : ''}" href="/app/t/${esc(id)}/agent">${waiting ? `승인할 것 ${waiting}건` : '제안과 주간 보고 보기'}</a></p></section>`;
       } catch (e) { if (!(e instanceof LedgerError)) throw e; }
     }
-    const guestHtml = me.role === 'guest' ? '<section class="box"><p>게스트로 속한 팀입니다. 배정된 프로젝트의 계획과 작업은 에이전트나 대시보드에서 봅니다.</p></section>' : '';
+    const guestHtml = me.role === 'guest' ? `<section class="box"><p>게스트로 속한 팀입니다. 배정된 프로젝트의 계획과 작업은 에이전트나 대시보드에서 봅니다.</p>${titleForm}<p class="err" id="terr" role="alert"></p></section>` : '';
     page(res, me.name, `${header(uid, name)}<main><p><a href="/app">← 내 공간</a></p>${nav}<h1>${esc(me.name)} <span class="chip">${ROLE[me.role]}</span></h1>
 ${guestHtml}${charterHtml}${membersHtml}${inviteHtml}${agentHtml}${cardsHtml}</main>`, `
 const S = ${js(id)}, base = '/app/api/t/' + S;
@@ -343,6 +348,10 @@ if ($('inv')) {
 }
 document.querySelectorAll('[data-revoke]').forEach(b => { b.onclick = () => api('DELETE', base + '/invites/' + encodeURIComponent(b.dataset.revoke)).then(reload).catch(err); });
 const terr = e => { $('terr').textContent = e.message; };
+if ($('tt')) $('tt').onsubmit = e => { e.preventDefault(); api('POST', base + '/title', { title: $('ttv').value }).then(reload).catch(terr); };
+if ($('tto')) { const u = $('ttu'), w = $('ttw'), fill = () => { w.value = u.selectedOptions[0].dataset.title || ''; };
+  u.onchange = fill; fill();
+  $('tto').onsubmit = e => { e.preventDefault(); api('POST', base + '/title', { uid: u.value, title: w.value }).then(reload).catch(terr); }; }
 if ($('tf')) $('tf').onsubmit = e => { e.preventDefault(); const b = $('tfb');
   if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 누르면 넘깁니다'; return; }
   api('POST', base + '/transfer', { to: $('tfu').value }).then(reload).catch(terr); };
@@ -416,6 +425,7 @@ document.querySelectorAll('[data-week]').forEach(b => { b.onclick = () => { cons
   api.post('/join', act((who, req) => spaces.join(who, refOf(req.body), req.body?.agree === undefined ? undefined : Number(req.body.agree))));
   api.post('/join/decline', act((who, req) => spaces.decline(who, refOf(req.body))));
   api.post('/t/:space/leave', act((who, req) => spaces.removeMember(who, sp(req), (who as { uid: string }).uid)));
+  api.post('/t/:space/title', act((who, req) => spaces.setTitle(who, sp(req), String(req.body?.uid || (who as { uid: string }).uid), String(req.body?.title ?? ''))));
   api.post('/t/:space/transfer', act((who, req) => spaces.transfer(who, sp(req), String(req.body?.to || ''))));
   api.post('/t/:space/delete', act(async (who, req) => {   // the team's name, typed: deleting a team is never one stray click
     const s = (await spaces.list(who)).find(x => x.id === sp(req)) as { name?: string } | undefined;
@@ -519,7 +529,7 @@ const STYLE = `
 main { max-width: 860px; margin: 0 auto; padding: 20px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); display: grid; gap: 16px }
 main.narrow { max-width: 440px; margin-top: 8vh } h1 { font-size: 22px; margin: 0; text-wrap: balance } h1 small { font-size: 14px; color: var(--muted); font-weight: 400 }
 h2 { font-size: 16px; margin: 0 0 8px } h3 { font-size: 15px; margin: 0 0 8px } p { margin: 0 0 8px } a { color: var(--accent) }
-.sub, .note { color: var(--muted); font-size: 13.5px } .warn { color: var(--warn) } b.warn { font-weight: 600 }
+.sub, .note { color: var(--muted); font-size: 13.5px } .ttl { color: var(--muted) } .warn { color: var(--warn) } b.warn { font-weight: 600 }
 .box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0 }
 .stack { display: grid; gap: 8px } .inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
 .btn { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; padding: 0 14px; font: inherit; display: inline-flex; align-items: center; text-decoration: none }

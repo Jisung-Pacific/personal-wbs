@@ -108,7 +108,7 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
     }, async () => run(() => plans.mine(caller, env)));
     if (plans && ledgerStore) server.registerTool('wbs_team', {
       title: 'Open a team space',
-      description: 'Everything a team screen shows, in one call: the space and the user\'s role, the charter in force and any open proposal, the members (owners and members only), the plan against the actual work (as wbs_plan), the user\'s own rows shared there, and who read them in the last 30 days. Use it when the user switches to a team or asks how the team is doing.',
+      description: 'Everything a team screen shows, in one call: the space and the user\'s role, the charter in force and any open proposal, the members with their display titles (owners and members only; a title grants nothing, the role does), the plan against the actual work (as wbs_plan), the user\'s own rows shared there, and who read them in the last 30 days. Use it when the user switches to a team or asks how the team is doing.',
       inputSchema: { space: teamSpace }, annotations: ro,
     }, async a => run(async () => {
       const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space), opts.briefs, opts.master);   // its address only for those who may connect it

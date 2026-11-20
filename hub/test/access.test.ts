@@ -1,6 +1,7 @@
 // The permission table against its specification. SPEC is written out here from the strategy document's role table
 // (owner: everything incl. inviting and billing; member: the same apart from inviting and billing; guest: its projects'
-// plan and work; team agent: plan, work and cards to read; nobody: another person's space) — not derived from the code —
+// plan and work; team agent: plan, work and cards to read; nobody: another person's space; everyone in a team: their own
+// display title, which grants nothing (decision 7)) — not derived from the code —
 // and every caller kind × relation × action is checked against it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +28,8 @@ agent.manage     Y     N      N     N
 space.transfer   Y     N      N     N
 space.delete     Y     N      N     N
 space.leave      N     Y      Y     N
-work.share       Y     Y      N     N`;
+work.share       Y     Y      N     N
+title.self       Y     Y      Y     N`;
 /** What an agent signed in by a person may do, and the scope it needs; every other action is for people only. */
 const AGENT: Partial<Record<Action, string>> = { 'space.see': 'wbs.read', 'plan.read': 'wbs.read', 'members.read': 'wbs.read', 'charter.read': 'wbs.read', 'plan.write': 'wbs.write', 'work.share': 'wbs.write', 'brief.read': 'wbs.read' };
 

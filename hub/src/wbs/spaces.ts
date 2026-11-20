@@ -22,6 +22,7 @@ import { callerUid, decide, type Action, type Caller, type Relation } from './ac
 
 export const PERSONAL = 'personal';
 export const MAX_PEOPLE = 10;
+export const TITLE_MAX = 30;   // a display title, in characters
 const SPACE_ID = /^s_[A-Za-z0-9_-]{22}$/;
 const PROJECT = /^\d{4}:\d+\.\d+$/;   // a package of one year, e.g. "2026:4.3"
 export const CHARTER_LINES = 9;
@@ -138,10 +139,25 @@ export class Spaces {
     if (cur.role === 'owner') throw new LedgerError('invalid', 'The owner\'s role changes only by a hand-over');
     const p = role === 'guest' ? cleanProjects(projects ?? cur.projects) : undefined;
     if (role === 'member' && projects !== undefined) throw new LedgerError('invalid', 'Members see every project; projects are for guests');
-    await this.store.putMember(id, { uid: who, role, since: cur.since, by: callerUid(caller)!, ...(p ? { projects: p } : {}) });
+    await this.store.putMember(id, { uid: who, role, since: cur.since, by: callerUid(caller)!, ...(p ? { projects: p } : {}), ...(cur.title ? { title: cur.title } : {}) });
     if (role === 'guest' && cur.role !== 'guest') await this.left?.(id, who);   // a guest shares nothing with the team
     await this.settle(id);   // a member who becomes a guest no longer holds up a proposal
     return { uid: who, role, ...(p ? { projects: p } : {}) };
+  }
+
+  /** A display title (execution WBS 3.9; the strategy's decision 7: "직함은 표시용"): words beside a name — 대표, 공동
+   *  창업자, 연구원, 자문 — that grant nothing; the role does. Each person sets their own; the owner may set or clear
+   *  anyone's. People only, on the hub's page: an agent never edits a membership. An empty title clears it. */
+  async setTitle(caller: Caller, id: string, who: string, title: string) {
+    assertUid(who);
+    await this.need(caller, id, who === callerUid(caller) ? 'title.self' : 'members.manage');
+    const t = String(title ?? '').replace(/\s+/g, ' ').trim();
+    if ([...t].length > TITLE_MAX || /[\u0000-\u001f\u007f]/.test(t)) throw new LedgerError('invalid', `A title is plain text of at most ${TITLE_MAX} characters`);
+    const cur = await this.store.membership(id, who);
+    if (!cur) throw new LedgerError('invalid', 'Not in this space');
+    const { title: _old, ...rest } = cur;
+    await this.store.putMember(id, t ? { ...rest, title: t } : rest);
+    return { space: id, uid: who, title: t || null };
   }
 
   // ---------------------------------------------------------------- invitations (execution WBS 5.3)
