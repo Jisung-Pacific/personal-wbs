@@ -11,6 +11,7 @@ import type { Store } from './store/types.js';
 import { IntentInput, PlanItemInput, ShareInput, type Plans } from './wbs/plan.js';
 import { ViewsInput, type Views } from './wbs/views.js';
 import { teamOverview } from './wbs/team.js';
+import type { Briefs } from './wbs/weekly.js';
 
 export const INSTRUCTIONS = `PP WBS Hub keeps one person's work ledger: every year of their work as atomic rows (one concrete deliverable, decision or event per row, dated from its source), shared by every agent they use.
 - Before adding, search (wbs_search) for the same work; extend an existing task with a dated step (wbs_add with parent) or a status change (wbs_update) instead of a near-duplicate row.
@@ -41,7 +42,7 @@ const run = async (f: () => Promise<unknown>) => { try { return ok(await f()); }
 
 /** `env`: the team space when the connection came through that team's own address (3.8); `hubUrl` gives each team its
  *  connector address in wbs_spaces. */
-export interface McpOptions { env?: string; hubUrl?: string }
+export interface McpOptions { env?: string; hubUrl?: string; briefs?: Briefs }
 
 export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: string[], version: string, inbox?: Inbox, plans?: Plans, views?: Views, ledgerStore?: Store, opts: McpOptions = {}): McpServer {
   const env = opts.env;
@@ -99,9 +100,21 @@ export function buildMcp(ledger: Ledger, spaces: Spaces, actor: Actor, scopes: s
       description: 'Everything a team screen shows, in one call: the space and the user\'s role, the charter in force and any open proposal, the members (owners and members only), the plan against the actual work (as wbs_plan), the user\'s own rows shared there, and who read them in the last 30 days. Use it when the user switches to a team or asks how the team is doing.',
       inputSchema: { space: teamSpace }, annotations: ro,
     }, async a => run(async () => {
-      const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space));   // its address only for those who may connect it
+      const t = await teamOverview(ledgerStore!, spaces, plans, views, caller, sp(a.space), opts.briefs);   // its address only for those who may connect it
       return { ...t, ...(opts.hubUrl && t.space.role !== 'guest' ? { connector_url: `${opts.hubUrl}/mcp/t/${t.space.id}` } : {}) };
     }));
+    const briefs = opts.briefs;
+    if (briefs) server.registerTool('wbs_weekly', {
+      title: 'Read the team\'s weekly brief',
+      description: 'A team\'s weekly brief (owners, members and the team\'s agent): progress in the week, bottlenecks, risks for the next seven days, the intents, and what falls due next — about the work only, never naming or comparing people. Default: the last week that has ended (generated Monday morning and then kept, so the whole team reads the same text); pass week (YYYY-Www) for an earlier one, or the current week for a live view that is not kept. Pass its lines to the team as they are.',
+      inputSchema: { space: teamSpace, week: z.string().regex(/^\d{4}-W\d{2}$/).optional().describe('ISO week, e.g. 2026-W47') }, annotations: ro,
+    }, async a => run(() => briefs.weekly(caller, sp(a.space), a.week)));
+    if (briefs) server.registerTool('wbs_coach', {
+      title: 'Coach the user on their own work',
+      description: 'Personal coaching for the user alone: their pace against their own past weeks (never anyone else\'s), what is overdue, due within seven days or stalled, the work style their rows show, and their part in each team (plan items they own, rows waiting for a plan item). Speak to the user only; never put it in a team brief or show it to others.'
+        + (env ? ' On this team connection it covers only the rows linked to this team.' : ''),
+      inputSchema: {}, annotations: ro,
+    }, async () => run(() => briefs.coach(caller, env)));
     if (views) server.registerTool('wbs_views', {
       title: 'See who viewed your shared rows',
       description: 'Who read team content carrying the user\'s shared rows: which person (and through which agent) or the team\'s agent, in which team space, how many of the user\'s rows, and when (first and last time each day, how often). Only the user sees this; their own reads are not listed. Days are kept 180 days.',

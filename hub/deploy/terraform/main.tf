@@ -10,6 +10,7 @@
 #     encrypt and decrypt with that one key and nothing else, and the key cannot be destroyed by a plan
 #   - the Cloud Run service (public: MCP clients and OAuth redirects must reach it), min 0 instances; CI (ci.tf) rolls new
 #     images, so Terraform ignores the image after the first apply
+#   - a weekly Cloud Scheduler job with its own service account that can only start the weekly briefs (weekly.tf)
 
 terraform {
   required_providers {
@@ -208,6 +209,13 @@ resource "google_cloud_run_v2_service" "hub" {
         content {
           name  = env.key
           value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.weekly ? [1] : []   # the only account allowed to start the weekly run (weekly.tf)
+        content {
+          name  = "HUB_SCHEDULER_SA"
+          value = google_service_account.scheduler[0].email
         }
       }
       dynamic "env" {

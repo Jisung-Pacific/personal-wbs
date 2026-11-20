@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Query } from 'firebase-admin/firestore';
 import {
-  isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
+  isSpaceOwner, spaceOwner, type AuthCode, type AuthRequest, type Card, type CharterVersion, type WeeklyBrief, type InboxItem, type LedgerEvent, type LedgerTx, type Membership,
   type Intent, type OAuthClient, type PlanItem, type PlanLink, type RefreshRecord, type Row, type RowFilter, type SharedWork, type SpaceRecord, type SpaceRole, type Store,
   type ViewEntry,
 } from './types.js';
@@ -312,6 +312,17 @@ export class FirestoreStore implements Store {
     const b = this.db.batch(); live.forEach(d => b.update(d.ref, { frozen: at })); await b.commit();
     return live.length;
   }
+
+  // weekly briefs (4.3): spaces/{id}/weekly/{YYYY-Www}, sealed under the space's key; team spaces are spaces/{id}
+  async teamSpaceIds() { return (await this.db.collection('spaces').select().get()).docs.map(d => d.id); }
+  private weeklyCol(id: string) { return this.spaceDoc(id).collection('weekly'); }
+  async weekly(id: string, week: string) {
+    const d = await this.weeklyCol(id).doc(week).get();
+    return d.exists ? await this.envelope.open<WeeklyBrief>(spaceOwner(id), `weekly/${week}`, d.get('enc') as Sealed) : null;
+  }
+  async putWeekly(id: string, b: WeeklyBrief) { await this.weeklyCol(id).doc(b.week).set({ enc: await this.envelope.seal(spaceOwner(id), `weekly/${b.week}`, b) }); }
+  async weeklies(id: string) { return (await this.weeklyCol(id).select().get()).docs.map(d => d.id).sort(); }
+  async removeWeekly(id: string, week: string) { await this.weeklyCol(id).doc(week).delete(); }
 
   // cards (4.2): spaces/{id}/cards/{uid}, sealed under the space's key; employee mode is a plain flag on the space
   private cardsCol(id: string) { return this.spaceDoc(id).collection('cards'); }

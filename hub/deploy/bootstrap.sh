@@ -177,7 +177,7 @@ fi
 say "APIs"
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com firestore.googleapis.com \
   cloudkms.googleapis.com secretmanager.googleapis.com iamcredentials.googleapis.com sts.googleapis.com firebaserules.googleapis.com \
-  firebaseappcheck.googleapis.com firebase.googleapis.com identitytoolkit.googleapis.com storage.googleapis.com
+  firebaseappcheck.googleapis.com firebase.googleapis.com identitytoolkit.googleapis.com storage.googleapis.com cloudscheduler.googleapis.com
 
 say "Terraform state: gs://$BUCKET"
 if ! gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then

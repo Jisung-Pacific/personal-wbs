@@ -54,7 +54,7 @@ test('Firestore store: a team space keeps its ledger, key and members apart; del
   assert.deepEqual(await store.spacesOf(a), []); assert.equal((await store.rows(a)).length, 1, 'the personal ledger stays');
 });
 
-test('Firestore store: the team plan, intents, cards, links and shared copies are sealed, freeze on leaving and go with the space', { skip: !on }, async () => {
+test('Firestore store: the team plan, intents, cards, weekly briefs, links and shared copies are sealed, freeze on leaving and go with the space', { skip: !on }, async () => {
   const { Spaces } = await import('../src/wbs/spaces.js'), { Plans } = await import('../src/wbs/plan.js'), { person } = await import('../src/wbs/access.js');
   const { Views } = await import('../src/wbs/views.js');
   const store = new FirestoreStore('demo-ppwbs', 'ppwbs', new LocalKek(randomBytes(32))), spaces = new Spaces(store), views = new Views(store), plans = new Plans(store, spaces, views);
@@ -79,8 +79,17 @@ test('Firestore store: the team plan, intents, cards, links and shared copies ar
   assert.deepEqual(await store.cards(s.id), [card]);
   assert.equal(await store.cardsOff(s.id), false); await store.setCardsOff(s.id, true); assert.equal(await store.cardsOff(s.id), true);
   await store.setCardsOff(s.id, false);
+  // weekly briefs (4.3): sealed per week under the space key, listed in order, every team space found for the run
+  const brief = { week: '2026-W46', from: '2026-11-09', to: '2026-11-15', as_of: '2026-11-16', generated: 1,
+    progress: { rows_done: 1, rows_started: 1, items_done: [] }, bottlenecks: [], blockers: [], risks: [],
+    intents: { lines: [], off_intent_rows: 0, unanchored: 0 }, next: [], lines: ['진척: 공유 행 완료 1 · 시작 1 · 완료된 계획 항목 없음'] };
+  await store.putWeekly(s.id, brief); await store.putWeekly(s.id, { ...brief, week: '2026-W45' });
+  assert.deepEqual(await store.weekly(s.id, '2026-W46'), brief);
+  assert.deepEqual(await store.weeklies(s.id), ['2026-W45', '2026-W46']);
+  assert.ok((await store.teamSpaceIds()).includes(s.id));
+  await store.removeWeekly(s.id, '2026-W45'); assert.deepEqual(await store.weeklies(s.id), ['2026-W46']);
   await spaces.removeMember(person(b), s.id, b);
   assert.ok((await store.shared(s.id))[0].frozen, 'the copy stays with the team, frozen');
   await spaces.remove(person(a), s.id);
-  assert.deepEqual([(await store.plan(s.id)).length, (await store.shared(s.id)).length, (await store.intents(s.id)).length, (await store.cards(s.id)).length], [0, 0, 0, 0]);
+  assert.deepEqual([(await store.plan(s.id)).length, (await store.shared(s.id)).length, (await store.intents(s.id)).length, (await store.cards(s.id)).length, (await store.weeklies(s.id)).length], [0, 0, 0, 0, 0]);
 });

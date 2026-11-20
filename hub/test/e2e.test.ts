@@ -119,7 +119,7 @@ test('MCP tools: add, duplicate guard, steps, update, isolation, scope-limited t
     const t = await connect(base, { uid: 'u_j', clientName: 'Claude' });
     const c = await mcp(base, t.access_token);
     const names = (await c.listTools()).tools.map(x => x.name).sort();
-    assert.deepEqual(names, ['wbs_add', 'wbs_brief', 'wbs_charter', 'wbs_export', 'wbs_get', 'wbs_inbox_add', 'wbs_inbox_list', 'wbs_inbox_mark', 'wbs_packages', 'wbs_plan', 'wbs_plan_put', 'wbs_search', 'wbs_share', 'wbs_shared', 'wbs_spaces', 'wbs_summary', 'wbs_team', 'wbs_update', 'wbs_views']);
+    assert.deepEqual(names, ['wbs_add', 'wbs_brief', 'wbs_charter', 'wbs_coach', 'wbs_export', 'wbs_get', 'wbs_inbox_add', 'wbs_inbox_list', 'wbs_inbox_mark', 'wbs_packages', 'wbs_plan', 'wbs_plan_put', 'wbs_search', 'wbs_share', 'wbs_shared', 'wbs_spaces', 'wbs_summary', 'wbs_team', 'wbs_update', 'wbs_views', 'wbs_weekly']);
     // a new package needs its area; then tasks take the next free code
     const a1 = json(await c.callTool({ name: 'wbs_add', arguments: { area: '5 대외·경력', package: '5.3 기타 소프트웨어 구축', task: 'PP WBS 허브 MCP 서버와 OAuth 인가 서버 구현', start: '2026-11-06', status: '진행 중', evidence: 'cc:test' } }));
     assert.equal(a1.created.code, '5.3.1'); assert.equal(a1.created.source, 'Claude');
@@ -241,14 +241,22 @@ test('team intents over MCP and REST: written with the plan, set against the sha
     const b = json(await c.callTool({ name: 'wbs_brief', arguments: { space: s.id } }));
     assert.deepEqual(b.alignment.intents.map((i: { id: string }) => i.id), ['i1', 'i2'], 'the team brief carries the alignment');
     assert.equal('alignment' in json(await c.callTool({ name: 'wbs_brief', arguments: {} })), false, 'the personal brief does not');
-    assert.equal(json(await c.callTool({ name: 'wbs_team', arguments: { space: s.id } })).alignment.total_work, 1);
+    const team = json(await c.callTool({ name: 'wbs_team', arguments: { space: s.id } }));
+    assert.equal(team.alignment.total_work, 1);
+    // the weekly brief (4.3): in the team screen and on its own, the same text; coaching for the person alone
+    const wk = json(await c.callTool({ name: 'wbs_weekly', arguments: { space: s.id } }));
+    assert.deepEqual(team.weekly.lines, wk.lines); assert.match(wk.lines[0], /^진척: /);
+    assert.match(json(await c.callTool({ name: 'wbs_coach', arguments: {} })).note, /본인에게만/);
     await c.close();
     // a guest's agent: no alignment anywhere, and the brief still answers
     const g = await mcp(base, (await connect(base, { uid: 'u_g', clientName: 'ChatGPT' })).access_token);
     const ga = await g.callTool({ name: 'wbs_plan', arguments: { space: s.id, view: 'alignment' } });
     assert.equal(ga.isError, true); assert.equal(json(ga).error, 'forbidden');
     assert.equal('alignment' in json(await g.callTool({ name: 'wbs_brief', arguments: { space: s.id } })), false);
-    assert.equal(json(await g.callTool({ name: 'wbs_team', arguments: { space: s.id } })).alignment, null);
+    const gt = json(await g.callTool({ name: 'wbs_team', arguments: { space: s.id } }));
+    assert.equal(gt.alignment, null); assert.equal(gt.weekly, null, 'guests get no weekly brief');
+    const gw = await g.callTool({ name: 'wbs_weekly', arguments: { space: s.id } });
+    assert.equal(gw.isError, true); assert.equal(json(gw).error, 'forbidden');
     await g.close();
     // REST: the same views by query parameter
     const t = await connect(base, { uid: 'u_m', resource: `${base}/v1`, scope: 'wbs.read', clientName: 'ChatGPT Actions' });

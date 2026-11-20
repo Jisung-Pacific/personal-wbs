@@ -10,11 +10,13 @@ a hub account. Its data sits in a separate Firestore database that only the hub'
 
 | Path | For |
 | --- | --- |
-| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, `wbs_charter`, `wbs_plan`, `wbs_shared`, `wbs_views`, `wbs_team`, and with `wbs.write` also `wbs_add`, `wbs_update`, `wbs_plan_put`, `wbs_share`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
+| `/mcp` | MCP over Streamable HTTP (stateless). Tools: `wbs_search`, `wbs_get`, `wbs_packages`, `wbs_brief`, `wbs_summary`, `wbs_export`, `wbs_spaces`, `wbs_charter`, `wbs_plan`, `wbs_shared`, `wbs_views`, `wbs_team`, `wbs_weekly`, `wbs_coach`, and with `wbs.write` also `wbs_add`, `wbs_update`, `wbs_plan_put`, `wbs_share`; each ledger tool takes an optional `space` (a team space id; default the personal ledger). A client sees only the tools its scopes allow. |
 | `/mcp/t/<space id>` | The same MCP server as one team space's environment (team defaults, work linked to its plan, no personal reads). |
 | `/oauth/*` | OAuth 2.1 authorization server: PKCE S256, dynamic client registration (RFC 7591), client ID metadata documents, confidential clients for GPT Actions, refresh rotation with reuse detection, revocation (RFC 7009), `iss` in responses (RFC 9207). |
 | `/v1/*`, `/openapi.json` | REST for agents that call HTTP functions (GPT Actions, DeepSeek or Kimi function calling, scripts). |
 | `/.well-known/*` | Protected-resource metadata (RFC 9728) per resource, server metadata (RFC 8414), JWKS. |
+| `/app` | People's own pages: team spaces, charters, members, cards — signed in in person, never through an agent. |
+| `/internal/weekly` | The Monday run of the weekly team briefs; only Cloud Scheduler's own account may call it. |
 
 Ledger rules live in the tools: one concrete result per row, codes assigned by the hub (next free number, never
 reused), a near-duplicate is refused with the existing rows, every change is kept in the history, the task text is
@@ -107,6 +109,19 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   one call and within the permission table: the space and the caller's role, the charter in force and any open
   proposal, the members (owners and members only), the plan against the actual work, the intent alignment (not for guests), the caller's own shared rows and
   who read them. The dashboard's space switcher calls it through the person's own claude.ai connector to the hub.
+- **Weekly team brief and personal coaching** (execution WBS 4.3): the two are kept apart. The team brief (`wbs_weekly`,
+  REST `GET /v1/weekly?space=…&week=YYYY-Www`; the latest also in `wbs_team`) is about the work only — progress (shared
+  rows done and started, plan items completed), bottlenecks with their reasons, blocker notes people chose to share,
+  risks due within seven days (no shared work, unfinished prerequisites), intents that drift, and what falls due next —
+  and no line names, counts or compares a person: feedback that turns attention from the task to the self is the kind
+  that most often backfires (Kluger & DeNisi, 1996, *Psychological Bulletin* 119(2), 254–284: over a third of 607 feedback
+  effects lowered performance). Each ended ISO week's brief is generated once (Monday 08:00 KST by Cloud Scheduler, or
+  by its first reader if the run has not happened) and then kept unchanged for half a year, so the whole team reads the
+  same text; the week in progress is computed live and not kept. Owners, members and the team's agent read it; guests
+  do not. Coaching (`wbs_coach`, REST `GET /v1/coach`) goes only to the person, through their own agent, and never to a
+  team's agent: their pace against their own past eight weeks (never anyone else's), what is overdue, due within seven
+  days or stalled for 14 days, the work style their rows show, and in each team the plan items they carry and links
+  still waiting for an item. On a team connection it covers only the rows linked to that team.
 - **Tokens**: ES256 JWT access tokens (1 h) bound to one resource (`/mcp`, `/v1` or the hub); refresh tokens (30 days)
   rotate and a reused one revokes the grant; codes (5 min) and parked requests (10 min) work once. Only SHA-256 hashes
   of secrets are stored, and a TTL policy removes expired OAuth state.
@@ -140,7 +155,8 @@ firebase emulators:exec --only firestore "FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
    switched-on sign-in providers (Google, Apple, OIDC providers such as Kakao, email), Terraform state in a versioned
    bucket of the project, and this clone's repository and branch for continuous deploys. `PLAN_ONLY=1` prints the full
    plan and creates nothing. It stops for your `yes` before every apply and creates only new resources: the database,
-   rules, TTL, KMS key, service account, the service and the keyless CI deployer.
+   rules, TTL, KMS key, service account, the service, the keyless CI deployer and the Monday job for the weekly team
+   briefs (its own service account, which can do nothing but start that run; `-var weekly_schedule=""` leaves it out).
 2. Set the printed `ci_variables` as GitHub repository variables. From then on every push to the deploy ref that touches
    `hub/` is tested, built and rolled out (`.github/workflows/hub-deploy.yml`).
 3. Firebase Auth: add the hub's host name to Authorized domains (in the project's own Terraform if it keeps the list there).

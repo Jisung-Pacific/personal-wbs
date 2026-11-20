@@ -8,8 +8,9 @@ import { callerUid, decide, type Caller } from './access.js';
 import type { Spaces } from './spaces.js';
 import type { Plans } from './plan.js';
 import type { Views } from './views.js';
+import type { Briefs } from './weekly.js';
 
-export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, views: Views | undefined, caller: Caller, space: string) {
+export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, views: Views | undefined, caller: Caller, space: string, briefs?: Briefs) {
   const e = await spaces.enter(caller, space, 'plan.read');
   const s = await store.space(space);
   if (!s) throw new LedgerError('not_found', 'No such space');
@@ -24,6 +25,8 @@ export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, v
   const seen = uid && views ? await views.mine(caller, { space, days: 30 }) : null;
   const { space: _s, ...pva } = plan;
   const alignment = e.relation === 'guest' ? null : await plans.align(caller, space).then(({ space: _x, ...a }) => a);
+  // last week's team brief (4.3): about the work only; guests do not get the whole team's picture
+  const weekly = briefs && may('brief.read') ? await briefs.weekly(caller, space).then(b => ({ week: b.week, from: b.from, to: b.to, as_of: b.as_of, lines: b.lines })) : null;
   return {
     space: { id: s.id, name: s.name, role: e.relation, ...(e.projects ? { projects: e.projects } : {}) },
     charter: charter && { in_force: charter.in_force?.version ?? null,   // getting here means the caller agreed to it (the gate)
@@ -32,6 +35,7 @@ export async function teamOverview(store: Store, spaces: Spaces, plans: Plans, v
     members: members && members.map(m => ({ uid: m.uid, role: m.role, since: m.since, ...(m.projects ? { projects: m.projects } : {}) })),
     plan: pva,
     alignment,
+    weekly,
     my_shared: mine,
     my_views: seen && { totals: seen.totals, lines: seen.lines },
   };

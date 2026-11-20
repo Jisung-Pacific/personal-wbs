@@ -21,7 +21,7 @@ export type Relation = 'owner' | 'member' | 'guest' | 'delegate' | 'none';
 export type Action =
   | 'space.see' | 'plan.read' | 'plan.write' | 'members.read' | 'members.manage' | 'billing.manage'
   | 'charter.read' | 'charter.propose' | 'charter.consent' | 'cards.read' | 'cards.publish' | 'cards.mode' | 'space.transfer' | 'space.delete' | 'space.leave'
-  | 'work.share';
+  | 'work.share' | 'brief.read';
 
 /** Per action: the relations that grant it, and the scope an agent acting for a person needs (null: people only). */
 export const TABLE: Readonly<Record<Action, { by: readonly Relation[]; agent: 'wbs.read' | 'wbs.write' | null }>> = {
@@ -37,6 +37,7 @@ export const TABLE: Readonly<Record<Action, { by: readonly Relation[]; agent: 'w
   'cards.read':      { by: ['owner', 'member', 'delegate'], agent: null },   // work-style and direction cards (4.2)
   'cards.publish':   { by: ['owner', 'member'], agent: null },   // one's own card, by one's own hand
   'cards.mode':      { by: ['owner'], agent: null },   // employee mode: the team runs without cards
+  'brief.read':      { by: ['owner', 'member', 'delegate'], agent: 'wbs.read' },   // the weekly team brief (4.3): the whole team's work
   'space.transfer':  { by: ['owner'], agent: null },
   'space.delete':    { by: ['owner'], agent: null },
   'space.leave':     { by: ['member', 'guest'], agent: null },   // the owner hands the space over first

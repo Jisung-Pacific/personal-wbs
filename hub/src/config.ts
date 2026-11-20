@@ -31,6 +31,8 @@
 //                         requests that carry it in X-Hub-Proxy are rate-limited by X-Hub-Client-Ip instead of the proxy's address
 //   HUB_SUPPORT_EMAIL     contact shown on the public pages (directories ask for one)
 //   HUB_OPENAI_APPS_CHALLENGE  the domain-verification token from OpenAI's submission portal, served at /.well-known/openai-apps-challenge
+//   HUB_SCHEDULER_SA      the service account whose Google OIDC tokens may start the weekly run (POST /internal/weekly);
+//                         unset → the endpoint does not exist, and briefs are generated on first read instead
 
 import type { HostConfig } from './auth/host.js';
 
@@ -59,6 +61,8 @@ export interface Config {
   openaiChallenge?: string;
   authProviders: AuthProvider[];
   proxySecret?: string;
+  /** The service account the weekly scheduler signs in as (Google OIDC), or none. */
+  schedulerSa?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -102,6 +106,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     openaiChallenge: env.HUB_OPENAI_APPS_CHALLENGE || undefined,
     authProviders: parseProviders(env.HUB_AUTH_PROVIDERS),
     proxySecret: proxySecret(env.HUB_PROXY_SECRET),
+    schedulerSa: env.HUB_SCHEDULER_SA || undefined,
   };
 }
 

@@ -121,3 +121,12 @@ variable "github_ref" {
   type    = string
   default = "refs/heads/main"
 }
+variable "weekly_schedule" {
+  type        = string
+  default     = "0 8 * * 1"
+  description = "Cron for the weekly team briefs (weekly.tf), in weekly_time_zone. Empty → no scheduler; briefs are made on first read."
+}
+variable "weekly_time_zone" {
+  type    = string
+  default = "Asia/Seoul"
+}

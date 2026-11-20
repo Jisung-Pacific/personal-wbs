@@ -51,6 +51,18 @@ export interface Card {
   published: number; updated: number;
 }
 
+/** A team's weekly brief (execution WBS 4.3): generated once for an ISO week that has ended and then kept as it was,
+ *  so the whole team reads the same text. About the work only: plan items and counts of rows, never people. */
+export interface WeeklyBrief {
+  week: string; from: string; to: string; as_of: string; generated: number;
+  progress: { rows_done: number; rows_started: number; items_done: { code: string; scope: string }[] };
+  bottlenecks: { code: string; scope: string; why: string[] }[]; blockers: string[];
+  risks: { code: string; scope: string; due: string; why: string[] }[];
+  intents: { lines: string[]; off_intent_rows: number; unanchored: number };
+  next: { code: string; scope: string; due: string }[];
+  lines: string[];
+}
+
 /** One of a team's intents (execution WBS 4.1; the charter's 의도 정렬: why, what, how), at most five in force, ranked.
  *  Plan items point at intents; the alignment shows where the shared work actually goes against them. */
 export interface Intent {
@@ -216,6 +228,12 @@ export interface Store {
   removeCard(id: string, uid: string): Promise<void>;
   cardsOff(id: string): Promise<boolean>;
   setCardsOff(id: string, off: boolean): Promise<void>;
+  /** Every team space's id (the weekly run walks them), and a team's weekly briefs by ISO week (4.3). */
+  teamSpaceIds(): Promise<string[]>;
+  weekly(id: string, week: string): Promise<WeeklyBrief | null>;
+  putWeekly(id: string, b: WeeklyBrief): Promise<void>;
+  weeklies(id: string): Promise<string[]>;
+  removeWeekly(id: string, week: string): Promise<void>;
   /** A team space's intents (4.1), and the same read-and-write-atomically pattern as the plan. */
   intents(id: string): Promise<Intent[]>;
   intentsTx<T>(id: string, fn: (all: Intent[]) => Promise<{ put: Intent[]; out: T }>): Promise<T>;
