@@ -266,7 +266,7 @@ export class Plans {
     const [pa, e] = await Promise.all([this.actual(caller, space, year), this.spaces.enter(caller, space, 'plan.read')]);
     const intents = new Map(e.relation === 'guest' ? [] : (await this.store.intents(space)).map(i => [i.id, i.why] as const));
     const head = ['연도', '코드', '스콥', '산출물', '완료 기준', '선행', '담당', '의도', '계획 상태', '시작 예정', '마감',
-      '실적 행', '실적 완료', '실적 상태', '실적 시작', '실적 끝', '최근 진행일', '지연(일)', '표시'];
+      '실적 행', '실적 완료', '실적 상태', '실적 시작', '실적 끝', '최근 진행일', '마감 대비(일)', '표시'];   // + late, - early
     const cells = (a: (string | null | undefined)[]) => a.map(v => v ?? '');   // an item without work has no actual state
     const rows = pa.items.map(r => cells([r.year, r.code, r.scope, r.deliverable, r.done, r.depends_on.join(' '),
       r.owners.join(', '),

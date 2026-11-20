@@ -90,11 +90,11 @@ Use the MCP URL `https://<hub>/mcp` unless the agent only takes OpenAPI.
   it chooses (a Drive folder, a repository). `wbs_plan` with `view: "csv"` (REST `GET /v1/plan?view=csv`, or the
   "plan.csv 내려받기" button on the team page) gives one row per plan item in code order (one plan year with `year`) —
   scope, deliverable, completion criterion, prerequisites, owners, intent, plan state and dates, then the actual work
-  (rows, done, state, dates, days late) and its flags — as UTF-8 with a BOM and CRLF like the ledger's files, with a
-  manifest (`rows`, `bytes`, `sha`:
-  the first 16 hex of the file's SHA-256, `at`, `source`) to check a copy against the hub. It counts the work without
-  saying who did it, and holds no more than the caller's plan view: a guest's copy only its projects and no intents.
-  It opens with the plan itself, after the charter gate, and the reading is logged for the people whose work it carries.
+  (rows, done, state, dates, days against the due date: positive late, negative early) and its flags — as UTF-8 with a
+  BOM and CRLF like the ledger's files, with a manifest (`rows`, `bytes`, `sha`: the first 16 hex of the file's
+  SHA-256, `at`, `source`) to check a copy against the hub. It counts the work without saying who did it, and holds no
+  more than the caller's plan view: a guest's copy only its projects and no intents. It opens with the plan itself,
+  after the charter gate, and the reading is logged for the people whose work it carries.
 - **People's own pages** (`/app`): what only a person may do, by their own hand — make a team space, propose and agree
   to its charter, invite people (a link or an account), accept or decline an invitation, change a role, remove members,
   move between one's teams, leave, hand a team over or delete it by typing its name — on the hub's own pages, signed

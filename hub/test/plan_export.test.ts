@@ -15,7 +15,7 @@ import { admit, boot, connect, json, mcp } from './support.js';
 
 const outcome = async (p: Promise<unknown>) => { try { await p; return 'ok'; } catch (e) { if (e instanceof LedgerError) return e.code; throw e; } };
 const A = person('u_a'), B = person('u_b'), G = person('u_g'), X = person('u_x');
-const HEAD = ['연도', '코드', '스콥', '산출물', '완료 기준', '선행', '담당', '의도', '계획 상태', '시작 예정', '마감', '실적 행', '실적 완료', '실적 상태', '실적 시작', '실적 끝', '최근 진행일', '지연(일)', '표시'];
+const HEAD = ['연도', '코드', '스콥', '산출물', '완료 기준', '선행', '담당', '의도', '계획 상태', '시작 예정', '마감', '실적 행', '실적 완료', '실적 상태', '실적 시작', '실적 끝', '최근 진행일', '마감 대비(일)', '표시'];
 
 async function team() {
   const store = new MemoryStore(), spaces = new Spaces(store), plans = new Plans(store, spaces), ledger = new Ledger(store);
@@ -49,6 +49,7 @@ test('the plan as plan.csv: items in code order with their actual work, and a ma
   assert.equal(r11[7], 'i1 첫 고객을 붙잡는다', 'the inherited intent, with its why');
   assert.deepEqual([r11[11], r11[12], r11[13], r11[14]], ['1', '0', '진행 중', '2026-11-03'], 'the shared row counts as its actual work');
   assert.equal(rows[0][11], '1', 'a parent counts the work under it');
+  assert.equal(rows[2][17], '', 'done, with no work behind it: no end to measure against the due date');
   assert.equal(rows[4][7], 'i1 첫 고객을 붙잡는다', 'inherited from its parent');
   assert.equal(rows[5][7], '', 'no intent, no label');
   assert.equal(out.manifest.rows, 6); assert.equal(out.manifest.source, 'hub'); assert.equal(out.manifest.file, 'plan.csv');
